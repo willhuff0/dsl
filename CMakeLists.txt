@@ -6,6 +6,9 @@ set(CMAKE_C_STANDARD 11)
 
 add_executable(zombies)
 
+find_package(raylib CONFIG REQUIRED)
+target_link_libraries(zombies PRIVATE raylib)
+
 target_sources(zombies
     PRIVATE
         src/main.cpp
@@ -19,6 +22,7 @@ target_sources(zombies
         include/Application.hpp
         include/Terrain.hpp
         include/Utils/RNG.hpp
+        include/Utils/Paths.hpp
 )
 
 target_include_directories(zombies

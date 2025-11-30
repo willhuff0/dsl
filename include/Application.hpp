@@ -2,7 +2,7 @@
 
 #include "Terrain.hpp"
 
-#include <raylib.h>
+#include <raylib-cpp.hpp>
 
 class Application {
 public:
@@ -13,6 +13,7 @@ public:
     void MainLoop();
 
 private:
-    Camera camera { 0 };
+    raylib::Window window;
+    raylib::Camera camera;
     Terrain terrain;
 };

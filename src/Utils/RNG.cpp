@@ -1,5 +1,7 @@
 #include "Utils/RNG.hpp"
 
+#include <chrono>
+
 RNG::RNG(uint64_t seed) : engine(seed) { }
 
 uint64_t RNG::GetTimeBasedSeed() {

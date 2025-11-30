@@ -7,7 +7,7 @@
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
-#include <raylib.h>
+#include <raylib-cpp.hpp>
 
 #define TERRAIN_CHUNK_SIZE 32
 #define TERRAIN_VIEW_DISTANCE_CHUNKS 4
@@ -32,13 +32,8 @@ namespace std {
 
 class Chunk {
 public:
-    Chunk(Mesh mesh, GridPos pos);
+    Chunk(raylib::Mesh&& mesh, GridPos pos);
     ~Chunk();
-
-    Chunk(Chunk&&) = delete;
-    Chunk& operator=(Chunk&&) = delete;
-    Chunk(const Chunk&) = delete;
-    Chunk& operator=(const Chunk&) = delete;
 
     void Load();
     void Unload();
@@ -46,8 +41,8 @@ public:
 
 private:
     bool isLoaded = true;
-    Mesh mesh;
-    Matrix transform;
+    raylib::Mesh mesh;
+    raylib::Matrix transform;
 };
 
 class Terrain {
@@ -61,8 +56,13 @@ private:
     void generateChunk(GridPos pos);
 
     int seed;
-    Material material { 0 };
+
+    raylib::Shader shader;
+    raylib::Material material;
+    raylib::Material redMaterial;
 
     std::unordered_map<GridPos, Chunk> chunks;
     std::unordered_set<GridPos> visibleChunks;
+
+    GridPos lastPlayerPos;
 };
