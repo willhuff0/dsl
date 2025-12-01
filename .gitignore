@@ -1,9 +1,2 @@
-/cmake-build-debug/
-/.idea/.gitignore
-/.idea/copilot.data.migration.agent.xml
-/.idea/copilot.data.migration.ask.xml
-/.idea/copilot.data.migration.edit.xml
-/.idea/misc.xml
-/.idea/modules.xml
-/.idea/vcs.xml
-/.idea/zombies.iml
+cmake-build-debug/
+.idea/

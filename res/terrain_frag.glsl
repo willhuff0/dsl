@@ -1,38 +1,99 @@
-#version 330
+#version 410
+precision highp float;
 
-// Input vertex attributes (from vertex shader)
-in vec3 fragPosition;
-in vec3 fragNormal;
+in vec3 v_position;
+in vec3 v_normal;
 
-// Output fragment color
-out vec4 finalColor;
+out vec4 o_color;
 
-uniform vec4 ambient;
-uniform vec3 viewPos;
+uniform vec3 u_viewPos;
+uniform float u_tiling;
 
-void main()
-{
-    // Texel color fetching from texture sampler
-    vec4 texelColor = vec4(1.0, 1.0, 1.0, 1.0);
-    vec3 lightDot = vec3(0.0);
-    vec3 normal = normalize(fragNormal);
-    vec3 viewD = normalize(viewPos - fragPosition);
-    vec3 specular = vec3(0.0);
+uniform float u_ambient;
 
+uniform sampler2D u_albedoTexture;
+uniform sampler2D u_metallicTexture;
+uniform sampler2D u_roughnessTexture;
+uniform sampler2D u_aoTexture;
+
+const float PI = 3.14159265359;
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness*roughness;
+    float a2 = a * a;
+    float NdotH  = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+
+    float num = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+
+    return num / denom;
+}
+
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = (roughness + 1.0);
+    float k = (r * r) / 8.0;
+
+    float num = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+
+    return num / denom;
+}
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2  = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1  = GeometrySchlickGGX(NdotL, roughness);
+
+    return ggx1 * ggx2;
+}
+
+void main() {
+    vec2 texCoord = vec2(v_position.x, v_position.z) * u_tiling;
+    vec3 albedo = texture(u_albedoTexture, texCoord).rgb;
+    float metallic = texture(u_metallicTexture, texCoord).r;
+    float roughness = texture(u_roughnessTexture, texCoord).r;
+    float ao = texture(u_aoTexture, texCoord).r;
+
+    vec3 N = normalize(v_normal);
+    vec3 V = normalize(u_viewPos - v_position);
+
+    vec3 Lo = vec3(0.0);
     {
-        vec3 light = -normalize(vec3(0.0, 0.0, 0.0) - vec3(1.0, 1.0, 1.0));
+        vec3 L = -normalize(vec3(-0.5, -1.0, -0.5));
+        vec3 H = normalize(V + L);
 
-        float NdotL = max(dot(normal, light), 0.0);
-        lightDot += vec3(1.0, 1.0, 1.0)*NdotL;
+        vec3 radiance = vec3(1.0, 1.0, 1.0) * 1.0;
 
-        float specCo = 0.0;
-        if (NdotL > 0.0) specCo = pow(max(0.0, dot(viewD, reflect(-(light), normal))), 16.0); // 16 refers to shine
-        specular += specCo;
+        vec3 F0 = vec3(0.04);
+        F0 = mix(F0, albedo, metallic);
+        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+        float NDF = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+        vec3 specular = numerator / denominator;
+
+        vec3 kS = F;
+        vec3 kD = vec3(1.0) - kS;
+        kD *= 1.0 - metallic;
+
+        float NdotL = max(dot(N, L), 0.0);
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
     }
 
-    finalColor = (texelColor*((vec4(specular, 1.0))*vec4(lightDot, 1.0)));
-    finalColor += texelColor*(ambient/10.0);
+    vec3 ambient = u_ambient * albedo * ao;
+    vec3 color = ambient + Lo;
 
-    // Gamma correction
-    finalColor = pow(finalColor, vec4(1.0/2.2));
+    color = color / (color + vec3(1.0));
+    color = pow(color, vec3(1.0 / 2.2));
+
+    o_color = vec4(color, 1.0);
 }

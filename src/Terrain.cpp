@@ -11,9 +11,9 @@
 
 Chunk::Chunk(raylib::Mesh&& mesh, GridPos pos) : mesh(std::forward<raylib::Mesh>(mesh)) {
     transform = MatrixTranslate(
-        (float)(pos.x * TERRAIN_CHUNK_SIZE),
+        (float)(pos.x * TERRAIN_CHUNK_SIZE) * TERRAIN_CELL_SIZE,
         0.0f,
-        (float)(pos.z * TERRAIN_CHUNK_SIZE)
+        (float)(pos.z * TERRAIN_CHUNK_SIZE) * TERRAIN_CELL_SIZE
     );
 }
 
@@ -43,16 +43,33 @@ void Chunk::Draw(const Material& material) {
 
 //#endregion
 
-Terrain::Terrain(int seed) : seed(seed), shader(TERRAIN_SHADER_PATHS) {
-    shader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(shader, "viewPos");
+Terrain::Terrain(int seed)
+    : seed(seed),
+      shader(TERRAIN_SHADER_PATHS),
+      albedoTexture(TERRAIN_ALBEDO_TEXTURE_PATH),
+      metallicTexture(TERRAIN_METALLIC_TEXTURE_PATH),
+      roughnessTexture(TERRAIN_ROUGHNESS_TEXTURE_PATH),
+      aoTexture(TERRAIN_AO_TEXTURE_PATH) {
+    shader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(shader, "u_viewPos");
 
-    int ambientLoc = GetShaderLocation(shader, "ambient");
-    float ambientValue[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
-    SetShaderValue(shader, ambientLoc, ambientValue, SHADER_UNIFORM_VEC4);
+    shader.locs[SHADER_LOC_MAP_ALBEDO] = GetShaderLocation(shader, "u_albedoTexture");
+    shader.locs[SHADER_LOC_MAP_METALNESS] = GetShaderLocation(shader, "u_metallicTexture");
+    shader.locs[SHADER_LOC_MAP_ROUGHNESS] = GetShaderLocation(shader, "u_roughnessTexture");
+    shader.locs[SHADER_LOC_MAP_OCCLUSION] = GetShaderLocation(shader, "u_aoTexture");
 
-    material.shader = shader;
+    int tilingLoc = GetShaderLocation(shader, "u_tiling");
+    float tiling = 0.25f;
+    SetShaderValue(shader, tilingLoc, &tiling, SHADER_UNIFORM_FLOAT);
 
-    redMaterial.maps[MATERIAL_MAP_ALBEDO].color = RED;
+    int ambientLoc = GetShaderLocation(shader, "u_ambient");
+    float ambient = 0.03f;
+    SetShaderValue(shader, ambientLoc, &ambient, SHADER_UNIFORM_FLOAT);
+
+    material.SetShader(shader);
+    material.SetTexture(MATERIAL_MAP_ALBEDO, albedoTexture);
+    material.SetTexture(MATERIAL_MAP_METALNESS, metallicTexture);
+    material.SetTexture(MATERIAL_MAP_ROUGHNESS, roughnessTexture);
+    material.SetTexture(MATERIAL_MAP_OCCLUSION, aoTexture);
 }
 
 void Terrain::Tick(Vector3 playerPos) {
@@ -63,8 +80,6 @@ void Terrain::Tick(Vector3 playerPos) {
         .x = (int)std::floor(playerPos.x / TERRAIN_CHUNK_SIZE),
         .z = (int)std::floor(playerPos.z / TERRAIN_CHUNK_SIZE),
     };
-
-    lastPlayerPos = playerChunkPos;
 
     std::unordered_set<GridPos> chunksToUnload(visibleChunks);
     std::unordered_set<GridPos> chunksToLoad;
@@ -103,80 +118,85 @@ void Terrain::Tick(Vector3 playerPos) {
 
 void Terrain::Draw() {
     for (const auto& chunkPos : visibleChunks) {
-        chunks.at(chunkPos).Draw(lastPlayerPos == chunkPos ? redMaterial : material);
+        chunks.at(chunkPos).Draw(material);
     }
 }
 
 void Terrain::generateChunk(GridPos pos) {
-    raylib::Mesh mesh;
-
-    mesh.vertexCount = (TERRAIN_CHUNK_SIZE + 1) * (TERRAIN_CHUNK_SIZE + 1);
-    mesh.triangleCount = TERRAIN_CHUNK_FACE_COUNT;
-    mesh.vertices = (float*)RL_MALLOC(mesh.vertexCount * 3 * sizeof(float));
-    mesh.normals = (float*)RL_CALLOC(mesh.vertexCount * 3, sizeof(float));
-    mesh.indices = (unsigned short*)RL_MALLOC(TERRAIN_CHUNK_FACE_COUNT * 3 * sizeof(unsigned short));
-
     FastNoiseLite noise;
     noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2S);
     noise.SetFractalType(FastNoiseLite::FractalType_Ridged);
     noise.SetSeed(seed);
 
-    const int stride = TERRAIN_CHUNK_SIZE + 1;
+    const int generationStride = TERRAIN_CHUNK_SIZE + 3;
+    std::vector<raylib::Vector3> generatedVertices(generationStride * generationStride);
 
-    // Generate Vertices
-    for (int localX = 0; localX <= TERRAIN_CHUNK_SIZE; localX++) {
-        for (int localZ = 0; localZ <= TERRAIN_CHUNK_SIZE; localZ++) {
-            int x = pos.x * TERRAIN_CHUNK_SIZE + localX;
-            int z = pos.z * TERRAIN_CHUNK_SIZE + localZ;
+    for (int localX = 0; localX < generationStride; localX++) {
+        for (int localZ = 0; localZ < generationStride; localZ++) {
+            float worldX = (float)(pos.x * TERRAIN_CHUNK_SIZE + (localX - 1)) * TERRAIN_CELL_SIZE;
+            float worldZ = (float)(pos.z * TERRAIN_CHUNK_SIZE + (localZ - 1)) * TERRAIN_CELL_SIZE;
 
-            float height = noise.GetNoise((float) x, (float) z) * 6;
+            float height = noise.GetNoise(worldX, worldZ) * 6.0f;
 
-            int vertexOffset = (localX * stride + localZ) * 3;
-            mesh.vertices[vertexOffset + 0] = (float) localX;
-            mesh.vertices[vertexOffset + 1] = (float) height;
-            mesh.vertices[vertexOffset + 2] = (float) localZ;
+            generatedVertices[localZ * generationStride + localX] = raylib::Vector3{
+                (float)(localX - 1) * TERRAIN_CELL_SIZE,
+                height,
+                (float)(localZ - 1) * TERRAIN_CELL_SIZE
+            };
         }
     }
 
-    // Generate Indices and Normals
+    raylib::Mesh mesh;
+    const int meshStride = TERRAIN_CHUNK_SIZE + 1;
+    mesh.vertexCount = meshStride * meshStride;
+    mesh.triangleCount = TERRAIN_CHUNK_FACE_COUNT;
+    mesh.vertices = (float*)RL_MALLOC(mesh.vertexCount * 3 * sizeof(float));
+    mesh.normals = (float*)RL_CALLOC(mesh.vertexCount * 3, sizeof(float));
+    mesh.indices = (unsigned short*)RL_MALLOC(TERRAIN_CHUNK_FACE_COUNT * 3 * sizeof(unsigned short));
+
+    for (int localX = 0; localX < meshStride; localX++) {
+        for (int localZ = 0; localZ < meshStride; localZ++) {
+            const auto& v = generatedVertices[(localZ + 1) * generationStride + (localX + 1)];
+            int vertexOffset = (localZ * meshStride + localX) * 3;
+            mesh.vertices[vertexOffset + 0] = v.x;
+            mesh.vertices[vertexOffset + 1] = v.y;
+            mesh.vertices[vertexOffset + 2] = v.z;
+        }
+    }
+
     for (int localX = 0; localX < TERRAIN_CHUNK_SIZE; localX++) {
         for (int localZ = 0; localZ < TERRAIN_CHUNK_SIZE; localZ++) {
             int indexOffset = (localZ * TERRAIN_CHUNK_SIZE + localX) * 6;
 
-            unsigned short i0 = (localZ + 0) * stride + (localX + 0);
-            unsigned short i1 = (localZ + 0) * stride + (localX + 1);
-            unsigned short i2 = (localZ + 1) * stride + (localX + 1);
-            unsigned short i3 = (localZ + 1) * stride + (localX + 0);
+            unsigned short i0 = (localZ + 0) * meshStride + (localX + 0);
+            unsigned short i1 = (localZ + 0) * meshStride + (localX + 1);
+            unsigned short i2 = (localZ + 1) * meshStride + (localX + 1);
+            unsigned short i3 = (localZ + 1) * meshStride + (localX + 0);
 
-            // Triangle 1
-            mesh.indices[indexOffset + 0] = i0;
+            mesh.indices[indexOffset + 0] = i2;
             mesh.indices[indexOffset + 1] = i1;
-            mesh.indices[indexOffset + 2] = i2;
-
-            // Triangle 2
-            mesh.indices[indexOffset + 3] = i2;
+            mesh.indices[indexOffset + 2] = i0;
+            mesh.indices[indexOffset + 3] = i0;
             mesh.indices[indexOffset + 4] = i3;
-            mesh.indices[indexOffset + 5] = i0;
+            mesh.indices[indexOffset + 5] = i2;
 
-            // Add face normals
-            raylib::Vector3 v0 = { mesh.vertices[i0 * 3 + 0], mesh.vertices[i0 * 3 + 1], mesh.vertices[i0 * 3 + 2] };
-            raylib::Vector3 v1 = { mesh.vertices[i1 * 3 + 0], mesh.vertices[i1 * 3 + 1], mesh.vertices[i1 * 3 + 2] };
-            raylib::Vector3 v2 = { mesh.vertices[i2 * 3 + 0], mesh.vertices[i2 * 3 + 1], mesh.vertices[i2 * 3 + 2] };
-            raylib::Vector3 v3 = { mesh.vertices[i3 * 3 + 0], mesh.vertices[i3 * 3 + 1], mesh.vertices[i3 * 3 + 2] };
+            const auto& v0 = generatedVertices[(localZ + 1) * generationStride + (localX + 1)];
+            const auto& v1 = generatedVertices[(localZ + 1) * generationStride + (localX + 2)];
+            const auto& v2 = generatedVertices[(localZ + 2) * generationStride + (localX + 2)];
+            const auto& v3 = generatedVertices[(localZ + 2) * generationStride + (localX + 1)];
 
-            Vector3 n1 = (v1 - v0).CrossProduct(v2 - v0).Normalize();
+            Vector3 n1 = (v2 - v0).CrossProduct(v1 - v0).Normalize();
             mesh.normals[i0 * 3 + 0] += n1.x; mesh.normals[i0 * 3 + 1] += n1.y; mesh.normals[i0 * 3 + 2] += n1.z;
             mesh.normals[i1 * 3 + 0] += n1.x; mesh.normals[i1 * 3 + 1] += n1.y; mesh.normals[i1 * 3 + 2] += n1.z;
             mesh.normals[i2 * 3 + 0] += n1.x; mesh.normals[i2 * 3 + 1] += n1.y; mesh.normals[i2 * 3 + 2] += n1.z;
 
-            Vector3 n2 = (v3 - v2).CrossProduct(v0 - v2).Normalize();
+            Vector3 n2 = (v3 - v0).CrossProduct(v2 - v0).Normalize();
+            mesh.normals[i0 * 3 + 0] += n2.x; mesh.normals[i0 * 3 + 1] += n2.y; mesh.normals[i0 * 3 + 2] += n2.z;
             mesh.normals[i2 * 3 + 0] += n2.x; mesh.normals[i2 * 3 + 1] += n2.y; mesh.normals[i2 * 3 + 2] += n2.z;
             mesh.normals[i3 * 3 + 0] += n2.x; mesh.normals[i3 * 3 + 1] += n2.y; mesh.normals[i3 * 3 + 2] += n2.z;
-            mesh.normals[i0 * 3 + 0] += n2.x; mesh.normals[i0 * 3 + 1] += n2.y; mesh.normals[i0 * 3 + 2] += n2.z;
         }
     }
 
-    // Normalize normals
     for (int i = 0; i < mesh.vertexCount; i++) {
         raylib::Vector3 normal = { mesh.normals[i * 3 + 0], mesh.normals[i * 3 + 1], mesh.normals[i * 3 + 2] };
         normal = normal.Normalize();

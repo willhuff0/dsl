@@ -5,7 +5,7 @@
 Application::Application()
     : window(1920, 1080, "Zombies"),
       camera(Vector3(0.0f, 5.0f, -15.0f)),
-      terrain(1337) {
+      terrain(6767) {
     camera.fovy = 90.0f;
     camera.target = Vector3(0.0f, 0.0f, 0.0f);
 
@@ -34,9 +34,9 @@ void Application::MainLoop() {
 
     BeginMode3D(camera);
 
-    DrawGrid(10, 10);
+//    DrawGrid(10, 10);
     {
-        raylib::Vector3 origin = { 0.0f, 30.0f, 0.0f };
+        raylib::Vector3 origin = { 0.0f, 20.0f, 0.0f };
         raylib::Vector3 axisX = { 10.0f, 0.0f, 0.0f };
         raylib::Vector3 axisY = { 0.0f, 10.0f, 0.0f };
         raylib::Vector3 axisZ = { 0.0f, 0.0f, 10.0f };

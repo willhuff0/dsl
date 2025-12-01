@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <raylib-cpp.hpp>
 
+#define TERRAIN_CELL_SIZE 2.0f
 #define TERRAIN_CHUNK_SIZE 32
 #define TERRAIN_VIEW_DISTANCE_CHUNKS 4
 #define TERRAIN_CHUNK_FACE_COUNT (TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE * 2)
@@ -59,10 +60,11 @@ private:
 
     raylib::Shader shader;
     raylib::Material material;
-    raylib::Material redMaterial;
+    raylib::Texture albedoTexture;
+    raylib::Texture metallicTexture;
+    raylib::Texture roughnessTexture;
+    raylib::Texture aoTexture;
 
     std::unordered_map<GridPos, Chunk> chunks;
     std::unordered_set<GridPos> visibleChunks;
-
-    GridPos lastPlayerPos;
 };
