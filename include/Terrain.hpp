@@ -1,18 +1,23 @@
 #pragma once
 
-#include "Utils/RNG.hpp"
+#include <slgl/runtime/graphics/Graphics.hpp>
+#include <slgl/common/Math.hpp>
 
-#include <cstdint>
-#include <utility>
-#include <functional>
 #include <unordered_map>
 #include <unordered_set>
-#include <raylib-cpp.hpp>
+#include <vector>
+#include <cstdint>
 
-#define TERRAIN_CELL_SIZE 2.0f
-#define TERRAIN_CHUNK_SIZE 32
-#define TERRAIN_VIEW_DISTANCE_CHUNKS 4
-#define TERRAIN_CHUNK_FACE_COUNT (TERRAIN_CHUNK_SIZE * TERRAIN_CHUNK_SIZE * 2)
+using namespace SLGL::Graphics;
+
+struct TerrainUniforms {
+    float tiling;
+    float ambientIntensity;
+};
+
+struct ChunkUniforms {
+    glm::mat4 modelMatrix;
+};
 
 struct GridPos {
     int x, z;
@@ -33,37 +38,37 @@ namespace std {
 
 class Chunk {
 public:
-    Chunk(raylib::Mesh&& mesh, GridPos pos);
-    ~Chunk();
+    Chunk(GridPos pos, const BindSet::Layout::Ref& bindSetLayout,
+          const std::vector<glm::vec3>& positions,
+          const std::vector<glm::vec3>& normals,
+          const std::vector<uint32_t>& indices
+    );
 
-    void Load();
-    void Unload();
-    void Draw(const Material& material);
+    void Draw(RenderEncoder* renderEncoder);
 
 private:
-    bool isLoaded = true;
-    raylib::Mesh mesh;
-    raylib::Matrix transform;
+    Buffer::Ref positionBuffer;
+    Buffer::Ref normalBuffer;
+    Buffer::Ref indexBuffer;
+    BindSet::Ref bindSet;
 };
 
 class Terrain {
 public:
     explicit Terrain(int seed);
 
-    void Tick(Vector3 playerPos);
-    void Draw();
+    void Tick(glm::vec3 playerPos);
+    void Draw(RenderEncoder* renderEncoder);
 
 private:
     void generateChunk(GridPos pos);
 
     int seed;
 
-    raylib::Shader shader;
-    raylib::Material material;
-    raylib::Texture albedoTexture;
-    raylib::Texture metallicTexture;
-    raylib::Texture roughnessTexture;
-    raylib::Texture aoTexture;
+    BindSet::Layout::Ref chunkBindSetLayout;
+    BindSet::Ref bindSet;
+    ShaderPipeline::Layout::Ref shaderPipelineLayout;
+    ShaderPipeline::Render::Ref shaderPipeline;
 
     std::unordered_map<GridPos, Chunk> chunks;
     std::unordered_set<GridPos> visibleChunks;

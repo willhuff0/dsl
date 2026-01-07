@@ -1,91 +1,225 @@
-#include "Terrain.hpp"
-#include "Utils/Paths.hpp"
+#include <slgl/runtime/game/Terrain.hpp>
 
-#include <stdexcept>
-#include <cmath>
-#include <vector>
-#include <raylib-cpp/raymath.hpp>
-#include <Deps/FastNoiseLite.h>
+#include <slgl/runtime/game/Provider.hpp>
+#include <slgl/runtime/game/deps/FastNoiseLite.h>
+#include <slgl/runtime/game/TempImageLoader.hpp>
+#include <slgl/runtime/game/utils/Paths.hpp>
 
-//#region Chunk
+const int viewDistance = 12;
+const float cellSize = 1.0f;
+const int chunkSize = 32;
+const int indexCount = chunkSize * chunkSize * 6;
 
-Chunk::Chunk(raylib::Mesh&& mesh, GridPos pos) : mesh(std::forward<raylib::Mesh>(mesh)) {
-    transform = MatrixTranslate(
-        (float)(pos.x * TERRAIN_CHUNK_SIZE) * TERRAIN_CELL_SIZE,
+Chunk::Chunk(GridPos pos, const BindSet::Layout::Ref& bindSetLayout,
+             const std::vector<glm::vec3>& positions,
+             const std::vector<glm::vec3>& normals,
+             const std::vector<uint32_t>& indices) {
+    std::string chunkName = "Chunk (" + std::to_string(pos.x) + "," + std::to_string(pos.z) + ")";
+
+    positionBuffer = GetGFX()->CreateBuffer()
+            .SetLabel(chunkName + " Position Buffer")
+            .SetSize(positions.size() * sizeof(glm::vec3))
+            .SetUsage(Buffer::Usage::Vertex | Buffer::Usage::Write)
+            .Build();
+    positionBuffer->Write(GetQueue(), (void*)positions.data());
+
+    normalBuffer = GetGFX()->CreateBuffer()
+            .SetLabel(chunkName + " Normal Buffer")
+            .SetSize(normals.size() * sizeof(glm::vec3))
+            .SetUsage(Buffer::Usage::Vertex | Buffer::Usage::Write)
+            .Build();
+    normalBuffer->Write(GetQueue(), (void*)normals.data());
+
+    indexBuffer = GetGFX()->CreateBuffer()
+        .SetLabel(chunkName + " Index Buffer")
+        .SetSize(indices.size() * sizeof(uint32_t))
+        .SetUsage(Buffer::Usage::Index | Buffer::Usage::Write)
+        .Build();
+    indexBuffer->Write(GetQueue(), (void*)indices.data());
+
+    auto translation = glm::translate(glm::identity<glm::mat4>(), glm::vec3(
+        (float)(pos.x * chunkSize) * cellSize,
         0.0f,
-        (float)(pos.z * TERRAIN_CHUNK_SIZE) * TERRAIN_CELL_SIZE
-    );
+        (float)(-pos.z * chunkSize) * cellSize
+    ));
+
+    auto uniformBuffer = GetGFX()->CreateBuffer()
+        .SetLabel(chunkName + " Uniform Buffer")
+        .SetSize(sizeof(ChunkUniforms))
+        .SetUsage(Buffer::Usage::Uniform | Buffer::Usage::Write)
+        .Build();
+    ChunkUniforms uniforms {
+        .modelMatrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(
+            (float)(pos.x * chunkSize) * cellSize,
+            0.0f,
+            (float)(-pos.z * chunkSize) * cellSize
+        )),
+    };
+    uniformBuffer->Write(GetQueue(), &uniforms);
+
+    bindSet = bindSetLayout->Instantiate()
+        .SetLabel(chunkName + " Bind Set")
+        .SetEntry(0, { BindSet::Entry::Buffer {
+            .buffer = uniformBuffer,
+            .size = uniformBuffer->GetSize(),
+        }})
+        .Build();
 }
 
-Chunk::~Chunk() {
-    //UnloadMesh(mesh);
-    //Unload();
-
-    //delete[] mesh.vertices;
+void Chunk::Draw(SLGL::Graphics::RenderEncoder* renderEncoder) {
+    renderEncoder->SetIndexBuffer(indexBuffer, RenderEncoder::IndexFormat::Uint32);
+    renderEncoder->SetVertexBuffer(0, positionBuffer);
+    renderEncoder->SetVertexBuffer(1, normalBuffer);
+    renderEncoder->SetBindSet(2, bindSet);
+    renderEncoder->DrawIndexed(indexCount);
 }
 
-void Chunk::Load() {
-    if (isLoaded) return;
-    isLoaded = true;
-    //UploadMesh(&this->mesh, false);
+Terrain::Terrain(int seed) : seed(seed) {
+    chunkBindSetLayout = GetGFX()->CreateBindSetLayout()
+            .SetLabel("Terrain Chunk")
+            .AddEntry(0, {
+                .type = BindSet::Layout::Entry::Type::Buffer,
+                .buffer = {
+                    .type = BindSet::Layout::Entry::Buffer::Type::Uniform,
+                    .minSize = sizeof(ChunkUniforms),
+                },
+            })
+            .Build();
+
+    auto terrainBindSetLayout = GetGFX()->CreateBindSetLayout()
+        .SetLabel("Terrain")
+        .AddEntry(0, {
+            .type = BindSet::Layout::Entry::Type::Buffer,
+            .buffer = {
+                .type = BindSet::Layout::Entry::Buffer::Type::Uniform,
+                .minSize = sizeof(TerrainUniforms),
+            },
+        })
+        .AddEntry(1, { .type = BindSet::Layout::Entry::Type::Texture, .texture = {} })
+        .AddEntry(2, { .type = BindSet::Layout::Entry::Type::Texture, .texture = {} })
+        .AddEntry(3, { .type = BindSet::Layout::Entry::Type::Texture, .texture = {} })
+        .AddEntry(4, { .type = BindSet::Layout::Entry::Type::Texture, .texture = {} })
+        .AddEntry(5, { .type = BindSet::Layout::Entry::Type::Sampler })
+        .Build();
+
+    auto terrainUniformBuffer = GetGFX()->CreateBuffer()
+        .SetLabel("Terrain Uniform Buffer")
+        .SetSize(sizeof(TerrainUniforms))
+        .SetUsage(Buffer::Usage::Uniform | Buffer::Usage::Write)
+        .Build();
+    TerrainUniforms terrainUniforms {
+        .tiling = 0.125f,
+        .ambientIntensity = 2.0f,
+    };
+    terrainUniformBuffer->Write(GetQueue(), &terrainUniforms);
+
+    auto albedoTexture = GetGFX()->CreateTexture("Terrain Albedo", GetQueue(), LoadImage(TERRAIN_ALBEDO_TEXTURE_PATH, 3, Data::Image::ColorSpace::SRGB));
+    auto metallicTexture = GetGFX()->CreateTexture("Terrain Metallic", GetQueue(), LoadImage(TERRAIN_METALLIC_TEXTURE_PATH));
+    auto roughnessTexture = GetGFX()->CreateTexture("Terrain Roughness", GetQueue(), LoadImage(TERRAIN_ROUGHNESS_TEXTURE_PATH));
+    auto aoTexture = GetGFX()->CreateTexture("Terrain AO", GetQueue(), LoadImage(TERRAIN_AO_TEXTURE_PATH));
+    auto sampler = GetGFX()->CreateSampler()
+        .SetLabel("Terrain Sampler")
+        .SetAddressModeU(Sampler::AddressMode::Repeat)
+        .SetAddressModeV(Sampler::AddressMode::Repeat)
+        .SetAddressModeW(Sampler::AddressMode::Repeat)
+        .Build();
+
+    bindSet = terrainBindSetLayout->Instantiate()
+        .SetLabel("Terrain")
+        .SetEntry(0, { BindSet::Entry::Buffer {
+            .buffer = terrainUniformBuffer,
+            .size = terrainUniformBuffer->GetSize(),
+        }})
+        .SetEntry(1, { BindSet::Entry::TextureView {
+            .textureView = albedoTexture->CreateView().Build(),
+        }})
+        .SetEntry(2, { BindSet::Entry::TextureView {
+            .textureView = metallicTexture->CreateView().Build(),
+        }})
+        .SetEntry(3, { BindSet::Entry::TextureView {
+            .textureView = roughnessTexture->CreateView().Build(),
+        }})
+        .SetEntry(4, { BindSet::Entry::TextureView {
+            .textureView = aoTexture->CreateView().Build(),
+        }})
+        .SetEntry(5, { BindSet::Entry::Sampler {
+            .sampler = sampler,
+        }})
+        .Build();
+
+    shaderPipelineLayout = GetGFX()->CreateShaderPipelineLayout()
+        .SetLabel("Terrain")
+        .AddBindSetLayout(GetGlobalBindSetLayout())
+        .AddBindSetLayout(terrainBindSetLayout)
+        .AddBindSetLayout(chunkBindSetLayout)
+        .Build();
+
+    Data::Shader shaderData {
+        .language = SLGL::Data::Shader::Language::WGSL,
+        .source = terrainShaderCode,
+    };
+    auto shaderSource = GetGFX()->CreateShaderSource(shaderData);
+    auto shaderModule = GetGFX()->CreateShaderModule()
+        .SetLabel("Terrain")
+        .SetSource(shaderSource)
+        .Build();
+
+    shaderPipeline = GetGFX()->CreateShaderRenderPipeline(shaderPipelineLayout)
+        .SetLabel("Terrain")
+        .SetVertex({
+            .module = shaderModule,
+            .entry = "vs_main",
+            .buffers = {
+                ShaderPipeline::Render::Vertex::Buffer {
+                    .stride = sizeof(glm::vec3),
+                    .attributes = {
+                        ShaderPipeline::Render::Vertex::Buffer::Attribute {
+                            .format = SLGL::Graphics::ShaderPipeline::Render::Vertex::Buffer::Attribute::Format::Float32x3,
+                            .location = 0,
+                        },
+                    },
+                },
+                ShaderPipeline::Render::Vertex::Buffer {
+                    .stride = sizeof(glm::vec3),
+                    .attributes = {
+                        ShaderPipeline::Render::Vertex::Buffer::Attribute {
+                            .format = SLGL::Graphics::ShaderPipeline::Render::Vertex::Buffer::Attribute::Format::Float32x3,
+                            .location = 1,
+                        },
+                    },
+                },
+            },
+        })
+        .SetPrimitive({
+            .cullMode = ShaderPipeline::Render::Primitive::CullMode::None,
+        })
+        .SetDepthStencil({ })
+        .SetMultisample({
+            .count = GetMultisampleCount(),
+        })
+        .SetFragment({
+            .module = shaderModule,
+            .entry = "fs_main",
+            .targets = {
+                ShaderPipeline::Render::Fragment::ColorTarget {
+                    .surfaceFormat = GetRenderTextureSurfaceFormat(),
+                },
+            },
+        })
+        .Build();
 }
 
-void Chunk::Unload() {
-    if (!isLoaded) return;
-    isLoaded = false;
-    //UnloadMesh(mesh);
-}
-
-void Chunk::Draw(const Material& material) {
-    if (!isLoaded) throw std::runtime_error("Tried to draw an unloaded chunk!");
-    mesh.Draw(material, transform);
-}
-
-//#endregion
-
-Terrain::Terrain(int seed)
-    : seed(seed),
-      shader(TERRAIN_SHADER_PATHS),
-      albedoTexture(TERRAIN_ALBEDO_TEXTURE_PATH),
-      metallicTexture(TERRAIN_METALLIC_TEXTURE_PATH),
-      roughnessTexture(TERRAIN_ROUGHNESS_TEXTURE_PATH),
-      aoTexture(TERRAIN_AO_TEXTURE_PATH) {
-    shader.locs[SHADER_LOC_VECTOR_VIEW] = GetShaderLocation(shader, "u_viewPos");
-
-    shader.locs[SHADER_LOC_MAP_ALBEDO] = GetShaderLocation(shader, "u_albedoTexture");
-    shader.locs[SHADER_LOC_MAP_METALNESS] = GetShaderLocation(shader, "u_metallicTexture");
-    shader.locs[SHADER_LOC_MAP_ROUGHNESS] = GetShaderLocation(shader, "u_roughnessTexture");
-    shader.locs[SHADER_LOC_MAP_OCCLUSION] = GetShaderLocation(shader, "u_aoTexture");
-
-    int tilingLoc = GetShaderLocation(shader, "u_tiling");
-    float tiling = 0.25f;
-    SetShaderValue(shader, tilingLoc, &tiling, SHADER_UNIFORM_FLOAT);
-
-    int ambientLoc = GetShaderLocation(shader, "u_ambient");
-    float ambient = 0.03f;
-    SetShaderValue(shader, ambientLoc, &ambient, SHADER_UNIFORM_FLOAT);
-
-    material.SetShader(shader);
-    material.SetTexture(MATERIAL_MAP_ALBEDO, albedoTexture);
-    material.SetTexture(MATERIAL_MAP_METALNESS, metallicTexture);
-    material.SetTexture(MATERIAL_MAP_ROUGHNESS, roughnessTexture);
-    material.SetTexture(MATERIAL_MAP_OCCLUSION, aoTexture);
-}
-
-void Terrain::Tick(Vector3 playerPos) {
-    float cameraPos[3] = { playerPos.x, playerPos.y, playerPos.z };
-    SetShaderValue(shader, shader.locs[SHADER_LOC_VECTOR_VIEW], cameraPos, SHADER_UNIFORM_VEC3);
-
+void Terrain::Tick(glm::vec3 playerPos) {
     GridPos playerChunkPos = {
-        .x = (int)std::floor(playerPos.x / TERRAIN_CHUNK_SIZE),
-        .z = (int)std::floor(playerPos.z / TERRAIN_CHUNK_SIZE),
+        .x = (int)std::floor(playerPos.x / (chunkSize * cellSize)),
+        .z = (int)std::floor(-playerPos.z / (chunkSize * cellSize)),
     };
 
     std::unordered_set<GridPos> chunksToUnload(visibleChunks);
     std::unordered_set<GridPos> chunksToLoad;
-    for (int cx = -TERRAIN_VIEW_DISTANCE_CHUNKS; cx < TERRAIN_VIEW_DISTANCE_CHUNKS; cx++) {
-        for (int cz = -TERRAIN_VIEW_DISTANCE_CHUNKS; cz < TERRAIN_VIEW_DISTANCE_CHUNKS; cz++) {
-            if (cx * cx + cz * cz > TERRAIN_VIEW_DISTANCE_CHUNKS * TERRAIN_VIEW_DISTANCE_CHUNKS) continue;
+    for (int cx = -viewDistance; cx < viewDistance; cx++) {
+        for (int cz = -viewDistance; cz < viewDistance; cz++) {
+            if (cx * cx + cz * cz > viewDistance * viewDistance) continue;
 
             int x = cx + playerChunkPos.x;
             int z = cz + playerChunkPos.z;
@@ -102,7 +236,7 @@ void Terrain::Tick(Vector3 playerPos) {
     for (const auto& chunkPos: chunksToUnload) {
         visibleChunks.erase(chunkPos);
 
-        chunks.at(chunkPos).Unload();
+        //chunks.at(chunkPos).Unload();
     }
     for (const auto& chunkPos: chunksToLoad) {
         visibleChunks.emplace(chunkPos);
@@ -111,14 +245,16 @@ void Terrain::Tick(Vector3 playerPos) {
         if (iter == chunks.end()) {
             generateChunk(chunkPos);
         } else {
-            iter->second.Load();
+            //iter->second.Load();
         }
     }
 }
 
-void Terrain::Draw() {
+void Terrain::Draw(RenderEncoder* renderEncoder) {
+    renderEncoder->SetPipeline(shaderPipeline);
+    renderEncoder->SetBindSet(1, bindSet);
     for (const auto& chunkPos : visibleChunks) {
-        chunks.at(chunkPos).Draw(material);
+        chunks.at(chunkPos).Draw(renderEncoder);
     }
 }
 
@@ -126,86 +262,76 @@ void Terrain::generateChunk(GridPos pos) {
     FastNoiseLite noise;
     noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2S);
     noise.SetFractalType(FastNoiseLite::FractalType_Ridged);
+    noise.SetFractalOctaves(6);
+    noise.SetFrequency(0.0015);
     noise.SetSeed(seed);
 
-    const int generationStride = TERRAIN_CHUNK_SIZE + 3;
-    std::vector<raylib::Vector3> generatedVertices(generationStride * generationStride);
+    const int heightsStride = chunkSize + 3;
+    float heights[heightsStride][heightsStride];
 
-    for (int localX = 0; localX < generationStride; localX++) {
-        for (int localZ = 0; localZ < generationStride; localZ++) {
-            float worldX = (float)(pos.x * TERRAIN_CHUNK_SIZE + (localX - 1)) * TERRAIN_CELL_SIZE;
-            float worldZ = (float)(pos.z * TERRAIN_CHUNK_SIZE + (localZ - 1)) * TERRAIN_CELL_SIZE;
+    for (int localX = -1; localX < heightsStride - 1; localX++) {
+        for (int localZ = -1; localZ < heightsStride - 1; localZ++) {
+            float worldX = (float)(pos.x * chunkSize + localX) * cellSize;
+            float worldZ = (float)(-pos.z * chunkSize - localZ) * cellSize;
 
-            float height = noise.GetNoise(worldX, worldZ) * 6.0f;
-
-            generatedVertices[localZ * generationStride + localX] = raylib::Vector3{
-                (float)(localX - 1) * TERRAIN_CELL_SIZE,
-                height,
-                (float)(localZ - 1) * TERRAIN_CELL_SIZE
-            };
+            heights[localX + 1][localZ + 1] = noise.GetNoise(worldX, worldZ) * 24.0f;
         }
     }
 
-    raylib::Mesh mesh;
-    const int meshStride = TERRAIN_CHUNK_SIZE + 1;
-    mesh.vertexCount = meshStride * meshStride;
-    mesh.triangleCount = TERRAIN_CHUNK_FACE_COUNT;
-    mesh.vertices = (float*)RL_MALLOC(mesh.vertexCount * 3 * sizeof(float));
-    mesh.normals = (float*)RL_CALLOC(mesh.vertexCount * 3, sizeof(float));
-    mesh.indices = (unsigned short*)RL_MALLOC(TERRAIN_CHUNK_FACE_COUNT * 3 * sizeof(unsigned short));
+    const int meshStride = chunkSize + 1;
+    const int vertexCount = meshStride * meshStride;
 
+    std::vector<glm::vec3> positions;
+    positions.reserve(vertexCount);
     for (int localX = 0; localX < meshStride; localX++) {
         for (int localZ = 0; localZ < meshStride; localZ++) {
-            const auto& v = generatedVertices[(localZ + 1) * generationStride + (localX + 1)];
-            int vertexOffset = (localZ * meshStride + localX) * 3;
-            mesh.vertices[vertexOffset + 0] = v.x;
-            mesh.vertices[vertexOffset + 1] = v.y;
-            mesh.vertices[vertexOffset + 2] = v.z;
+            const auto& height = heights[localX + 1][localZ + 1];
+            positions.emplace_back((float)localX * cellSize, height, (float)-localZ * cellSize);
         }
     }
 
-    for (int localX = 0; localX < TERRAIN_CHUNK_SIZE; localX++) {
-        for (int localZ = 0; localZ < TERRAIN_CHUNK_SIZE; localZ++) {
-            int indexOffset = (localZ * TERRAIN_CHUNK_SIZE + localX) * 6;
+    std::vector<uint32_t> indices;
+    indices.reserve(indexCount);
+    for (int localX = 0; localX < chunkSize; localX++) {
+        for (int localZ = 0; localZ < chunkSize; localZ++) {
+            unsigned short i0 = (localX + 0) * meshStride + (localZ + 0);
+            unsigned short i1 = (localX + 1) * meshStride + (localZ + 0);
+            unsigned short i2 = (localX + 1) * meshStride + (localZ + 1);
+            unsigned short i3 = (localX + 0) * meshStride + (localZ + 1);
 
-            unsigned short i0 = (localZ + 0) * meshStride + (localX + 0);
-            unsigned short i1 = (localZ + 0) * meshStride + (localX + 1);
-            unsigned short i2 = (localZ + 1) * meshStride + (localX + 1);
-            unsigned short i3 = (localZ + 1) * meshStride + (localX + 0);
-
-            mesh.indices[indexOffset + 0] = i2;
-            mesh.indices[indexOffset + 1] = i1;
-            mesh.indices[indexOffset + 2] = i0;
-            mesh.indices[indexOffset + 3] = i0;
-            mesh.indices[indexOffset + 4] = i3;
-            mesh.indices[indexOffset + 5] = i2;
-
-            const auto& v0 = generatedVertices[(localZ + 1) * generationStride + (localX + 1)];
-            const auto& v1 = generatedVertices[(localZ + 1) * generationStride + (localX + 2)];
-            const auto& v2 = generatedVertices[(localZ + 2) * generationStride + (localX + 2)];
-            const auto& v3 = generatedVertices[(localZ + 2) * generationStride + (localX + 1)];
-
-            Vector3 n1 = (v2 - v0).CrossProduct(v1 - v0).Normalize();
-            mesh.normals[i0 * 3 + 0] += n1.x; mesh.normals[i0 * 3 + 1] += n1.y; mesh.normals[i0 * 3 + 2] += n1.z;
-            mesh.normals[i1 * 3 + 0] += n1.x; mesh.normals[i1 * 3 + 1] += n1.y; mesh.normals[i1 * 3 + 2] += n1.z;
-            mesh.normals[i2 * 3 + 0] += n1.x; mesh.normals[i2 * 3 + 1] += n1.y; mesh.normals[i2 * 3 + 2] += n1.z;
-
-            Vector3 n2 = (v3 - v0).CrossProduct(v2 - v0).Normalize();
-            mesh.normals[i0 * 3 + 0] += n2.x; mesh.normals[i0 * 3 + 1] += n2.y; mesh.normals[i0 * 3 + 2] += n2.z;
-            mesh.normals[i2 * 3 + 0] += n2.x; mesh.normals[i2 * 3 + 1] += n2.y; mesh.normals[i2 * 3 + 2] += n2.z;
-            mesh.normals[i3 * 3 + 0] += n2.x; mesh.normals[i3 * 3 + 1] += n2.y; mesh.normals[i3 * 3 + 2] += n2.z;
+            indices.emplace_back(i0);
+            indices.emplace_back(i1);
+            indices.emplace_back(i2);
+            indices.emplace_back(i2);
+            indices.emplace_back(i3);
+            indices.emplace_back(i0);
         }
     }
 
-    for (int i = 0; i < mesh.vertexCount; i++) {
-        raylib::Vector3 normal = { mesh.normals[i * 3 + 0], mesh.normals[i * 3 + 1], mesh.normals[i * 3 + 2] };
-        normal = normal.Normalize();
-        mesh.normals[i * 3 + 0] = normal.x;
-        mesh.normals[i * 3 + 1] = normal.y;
-        mesh.normals[i * 3 + 2] = normal.z;
+    std::vector<glm::vec3> normals;
+    normals.resize(vertexCount);
+    for (int localX = -1; localX < heightsStride - 2; localX++) {
+        for (int localZ = -1; localZ < heightsStride - 2; localZ++) {
+            const auto& v0 = glm::vec3((float)(localX + 0) * cellSize, heights[localX + 1][localZ + 1], (float)(-localZ + 0) * cellSize);
+            const auto& v1 = glm::vec3((float)(localX + 1) * cellSize, heights[localX + 2][localZ + 1], (float)(-localZ + 0) * cellSize);
+            const auto& v2 = glm::vec3((float)(localX + 1) * cellSize, heights[localX + 2][localZ + 2], (float)(-localZ - 1) * cellSize);
+            const auto& v3 = glm::vec3((float)(localX + 0) * cellSize, heights[localX + 1][localZ + 2], (float)(-localZ - 1) * cellSize);
+
+            glm::vec3 n1 = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+            if (localX >= 0 && localZ >= 0) normals[(localX + 0) * meshStride + (localZ + 0)] += n1;
+            if (localX + 1 < meshStride && localZ >= 0) normals[(localX + 1) * meshStride + (localZ + 0)] += n1;
+            if (localX + 1 < meshStride && localZ + 1 < meshStride) normals[(localX + 1) * meshStride + (localZ + 1)] += n1;
+
+            glm::vec3 n2 = glm::normalize(glm::cross(v3 - v2, v0 - v2));
+            if (localX + 1 < meshStride && localZ + 1 < meshStride) normals[(localX + 1) * meshStride + (localZ + 1)] += n2;
+            if (localX >= 0 && localZ + 1 < meshStride) normals[(localX + 0) * meshStride + (localZ + 1)] += n2;
+            if (localX >= 0 && localZ >= 0) normals[(localX + 0) * meshStride + (localZ + 0)] += n2;
+        }
     }
 
-    UploadMesh(&mesh, false);
+    for (auto& normal: normals) {
+        normal = glm::normalize(normal);
+    }
 
-    chunks.emplace(std::piecewise_construct, std::forward_as_tuple(pos), std::forward_as_tuple(std::move(mesh), pos));
+    chunks.emplace(std::piecewise_construct, std::forward_as_tuple(pos), std::forward_as_tuple(pos, chunkBindSetLayout, positions, normals, indices));
 }
