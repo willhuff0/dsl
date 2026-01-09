@@ -5,7 +5,7 @@
 
 #include "FlyCamera.hpp"
 #include "PostProcessing.hpp"
-// #include "Terrain.hpp"
+#include "Terrain.hpp"
 #include "Skybox.hpp"
 // #include "MeshRenderer.hpp"
 
@@ -32,7 +32,7 @@ private:
     FlyCamera flyCamera;
     std::unique_ptr<PostProcessing> postProcessing = nullptr;
     std::unique_ptr<Skybox> skybox = nullptr;
-    // std::unique_ptr<Terrain> terrain = nullptr;
+    std::unique_ptr<Terrain> terrain = nullptr;
 
     // std::unique_ptr<MeshRenderer> meshRenderer = nullptr;
 };

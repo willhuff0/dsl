@@ -1,5 +1,7 @@
 #include <TempImageLoader.hpp>
 
+#include "Provider.hpp"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <deps/stb_image.h>
 
@@ -8,6 +10,63 @@ using numeric::float16_t;
 
 #include <memory>
 #include <cstdint>
+
+static vk::Format convertResFormat(int channels, Data::Image::CompressionMode compressionMode, Data::Image::ColorSpace colorSpace) {
+    switch(channels) {
+        case 1:
+            switch(compressionMode) {
+            case Data::Image::CompressionMode::Uncompressed: return vk::Format::eR8Unorm;
+            case Data::Image::CompressionMode::BC4: return vk::Format::eBc4UnormBlock;
+            default: throw std::runtime_error("Unexpected channel/compression combo");
+        }
+        case 2:
+            switch(compressionMode) {
+            case Data::Image::CompressionMode::Uncompressed: return vk::Format::eR8G8Unorm;
+            case Data::Image::CompressionMode::BC5: return vk::Format::eBc5UnormBlock;
+            default: throw std::runtime_error("Unexpected channel/compression combo");
+        }
+        case 3:
+            switch(compressionMode) {
+            case Data::Image::CompressionMode::Uncompressed: return colorSpace == Data::Image::ColorSpace::Linear ? vk::Format::eR8G8B8A8Unorm : vk::Format::eR8G8B8A8Srgb;
+            default: throw std::runtime_error("Unexpected channel/compression combo");
+        }
+        case 4:
+            switch(compressionMode) {
+            case Data::Image::CompressionMode::Uncompressed: return colorSpace == Data::Image::ColorSpace::Linear ? vk::Format::eR8G8B8A8Unorm : vk::Format::eR8G8B8A8Srgb;
+            case Data::Image::CompressionMode::BC7: return colorSpace == Data::Image::ColorSpace::Linear ? vk::Format::eBc7UnormBlock : vk::Format::eBc7SrgbBlock;
+            default: throw std::runtime_error("Unexpected channel/compression combo");
+        }
+        default: throw std::runtime_error("Unexpected channel count");
+    }
+}
+
+dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::Image& image) {
+    auto texture = dvk::Texture::Create(GetDevice())
+        .SetLabel(label)
+        .SetUsage(vk::ImageUsageFlagBits::eSampled)
+        .SetFormat(convertResFormat(image.channels, image.compressionMode, image.colorSpace))
+        .SetExtent({ static_cast<uint32_t>(image.width), static_cast<uint32_t>(image.height), 1 })
+        .EnableWriteWithStaging()
+        .Build();
+
+    if (image.channels == 3) {
+        assert(image.compressionMode == Data::Image::CompressionMode::Uncompressed);
+        // Convert RGB to RGBA
+        unsigned char* rgb = image.data.get();
+        unsigned char* rgba = new unsigned char[image.width * image.height * 4];
+        for (unsigned long i = 0; i < image.width * image.height; i++) {
+            rgba[i * 4 + 0] = rgb[i * 3 + 0];
+            rgba[i * 4 + 1] = rgb[i * 3 + 1];
+            rgba[i * 4 + 2] = rgb[i * 3 + 2];
+            rgba[i * 4 + 3] = 255;
+        }
+        texture->WriteWithStaging(GetCommandEncoder(), rgba, image.width * image.height * 4);
+        delete[] rgba;
+    } else {
+        texture->WriteWithStaging(GetCommandEncoder(), image.data.get(), image.size);
+    }
+    return texture;
+}
 
 Data::Image LoadImage(const std::string& path, int channels, Data::Image::ColorSpace colorSpace) {
     Data::Image image;

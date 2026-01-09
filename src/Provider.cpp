@@ -6,6 +6,7 @@ static Platform* platformBackend;
 static dvk::Device* graphicsBackend;
 
 static vk::Format graphicsSurfaceFormat;
+static vk::SampleCountFlagBits sampleCount;
 
 static dvk::CommandEncoder* graphicsCommandEncoder;
 static dvk::BindPool::Ref bindPool;
@@ -16,6 +17,20 @@ static std::array<dvk::BindSet::Ref, FRAMES_IN_FLIGHT> globalBindSet;
 static dvk::Sampler::Ref environmentSampler;
 
 static constexpr auto renderTextureFormat = vk::Format::eR16G16B16A16Sfloat;
+
+static vk::SampleCountFlagBits getMaxUsableSampleCount() {
+    vk::PhysicalDeviceProperties physicalDeviceProperties = GetDevice().GetPhysicalDevice().getProperties();
+
+    vk::SampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts & physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+    if (counts & vk::SampleCountFlagBits::e64) { return vk::SampleCountFlagBits::e64; }
+    if (counts & vk::SampleCountFlagBits::e32) { return vk::SampleCountFlagBits::e32; }
+    if (counts & vk::SampleCountFlagBits::e16) { return vk::SampleCountFlagBits::e16; }
+    if (counts & vk::SampleCountFlagBits::e8) { return vk::SampleCountFlagBits::e8; }
+    if (counts & vk::SampleCountFlagBits::e4) { return vk::SampleCountFlagBits::e4; }
+    if (counts & vk::SampleCountFlagBits::e2) { return vk::SampleCountFlagBits::e2; }
+
+    return vk::SampleCountFlagBits::e1;
+}
 
 void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder* commandEncoder, vk::Format surfaceFormat) {
     platformBackend = platform;
@@ -67,6 +82,8 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
         .SetLabel("Global Environment Sample")
         .SetAddressMode(vk::SamplerAddressMode::eClampToEdge)
         .Build();
+
+    sampleCount = getMaxUsableSampleCount();
 }
 
 void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex) {
@@ -91,18 +108,18 @@ void SetSkybox(const dvk::Texture::Ref& irradianceMap,
                     .SetLabel("Global Irradiance CubeMap")
                     .SetType(vk::ImageViewType::eCube)
                     .Build())
-                .FinishImage()
+                .FinishTexture()
             .BindTexture(3)
                 .SetTextureView(dvk::TextureView::Create(GetDevice(), radianceMap)
                     .SetLabel("Global Radiance CubeMap")
                     .SetType(vk::ImageViewType::eCube)
                     .Build())
-                .FinishImage()
+                .FinishTexture()
             .BindTexture(4)
                 .SetTextureView(dvk::TextureView::Create(GetDevice(), brdfLut)
                     .SetLabel("Global Environment BRDF LUT")
                     .Build())
-                .FinishImage()
+                .FinishTexture()
             .Update(globalBindSet[i]);
     }
 }
@@ -121,4 +138,4 @@ vk::Format GetRenderTextureFormat() { return renderTextureFormat; }
 vk::Format GetDisplaySurfaceFormat() { return graphicsSurfaceFormat; }
 
 vk::Format GetDepthFormat() { return vk::Format::eD32Sfloat; }
-vk::SampleCountFlagBits GetMultisampleCount() { return vk::SampleCountFlagBits::e4; }
+vk::SampleCountFlagBits GetMultisampleCount() { return sampleCount; }

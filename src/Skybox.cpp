@@ -168,6 +168,7 @@ CubeMapConverter::CubeMapConverter() {
         .Build();
 
     glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+    captureProjection[1][1] *= -1;
     glm::mat4 captureViews[] = {
         glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f,  0.0f,  0.0f), glm::vec3(0.0f, 1.0f,  0.0f)),
         glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 1.0f,  0.0f,  0.0f), glm::vec3(0.0f, 1.0f,  0.0f)),
@@ -231,7 +232,7 @@ dvk::Texture::Ref CubeMapConverter::ConvertEquirectangularToCubeMap(const dvk::T
     dvk::Binder()
         .BindTexture(0)
             .SetTextureView(equirectangularMapView)
-            .FinishImage()
+            .FinishTexture()
         .BindSampler(1)
             .SetSampler(sampler)
             .FinishSampler()
@@ -259,7 +260,7 @@ dvk::Texture::Ref CubeMapConverter::GenerateIrradianceMap(const dvk::Texture::Re
     dvk::Binder()
         .BindTexture(0)
             .SetTextureView(cubeMapView)
-            .FinishImage()
+            .FinishTexture()
         .BindSampler(1)
             .SetSampler(sampler)
             .FinishSampler()
@@ -292,7 +293,7 @@ dvk::Texture::Ref CubeMapConverter::GenerateRadianceMap(const dvk::Texture::Ref&
     dvk::Binder()
         .BindTexture(0)
             .SetTextureView(cubeMapView)
-            .FinishImage()
+            .FinishTexture()
         .BindSampler(1)
             .SetSampler(sampler)
             .FinishSampler()
@@ -463,7 +464,7 @@ Skybox::Skybox(dvk::Texture::Ref cubeMap, dvk::Texture::Ref irradianceMap, dvk::
                 .FinishBuffer()
             .BindTexture(1)
                 .SetTextureView(cubeMapView)
-                .FinishImage()
+                .FinishTexture()
             .BindSampler(2)
                 .SetSampler(sampler)
                 .FinishSampler()

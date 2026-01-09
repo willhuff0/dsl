@@ -30,7 +30,7 @@ target_sources(zombies
         src/utils/RNG.cpp
         src/TempImageLoader.cpp
         src/FlyCamera.cpp
-#        src/Terrain.cpp
+        src/Terrain.cpp
         src/Skybox.cpp
 #        src/Node.cpp
         src/PostProcessing.cpp
@@ -52,7 +52,7 @@ target_sources(zombies
         include/DataImage.hpp
         include/TempImageLoader.hpp
         include/FlyCamera.hpp
-#        include/Terrain.hpp
+        include/Terrain.hpp
         include/Skybox.hpp
         include/PostProcessing.hpp
 #        include/Node.hpp

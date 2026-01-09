@@ -1,211 +1,182 @@
-#include <slgl/runtime/game/Terrain.hpp>
+#include <Terrain.hpp>
 
-#include <slgl/runtime/game/Provider.hpp>
-#include <slgl/runtime/game/deps/FastNoiseLite.h>
-#include <slgl/runtime/game/TempImageLoader.hpp>
-#include <slgl/runtime/game/utils/Paths.hpp>
+#include <Provider.hpp>
+#include <deps/FastNoiseLite.h>
+#include <TempImageLoader.hpp>
+#include <utils/Paths.hpp>
 
-const int viewDistance = 12;
-const float cellSize = 1.0f;
-const int chunkSize = 32;
-const int indexCount = chunkSize * chunkSize * 6;
+constexpr int viewDistance = 12;
+constexpr float cellSize = 1.0f;
+constexpr int chunkSize = 32;
+constexpr int indexCount = chunkSize * chunkSize * 6;
 
-Chunk::Chunk(GridPos pos, const BindSet::Layout::Ref& bindSetLayout,
+Chunk::Chunk(GridPos pos, const dvk::BindPool::Ref& bindPool, const dvk::BindSetLayout::Ref& bindSetLayout,
              const std::vector<glm::vec3>& positions,
              const std::vector<glm::vec3>& normals,
              const std::vector<uint32_t>& indices) {
     std::string chunkName = "Chunk (" + std::to_string(pos.x) + "," + std::to_string(pos.z) + ")";
 
-    positionBuffer = GetGFX()->CreateBuffer()
+    positionBuffer = dvk::Buffer::Create(GetDevice())
             .SetLabel(chunkName + " Position Buffer")
+            .SetUsage(vk::BufferUsageFlagBits::eVertexBuffer)
             .SetSize(positions.size() * sizeof(glm::vec3))
-            .SetUsage(Buffer::Usage::Vertex | Buffer::Usage::Write)
+            .EnableWriteWithStaging()
             .Build();
-    positionBuffer->Write(GetQueue(), (void*)positions.data());
+    positionBuffer->WriteWithStaging(GetCommandEncoder(), positions.data());
 
-    normalBuffer = GetGFX()->CreateBuffer()
+    normalBuffer = dvk::Buffer::Create(GetDevice())
             .SetLabel(chunkName + " Normal Buffer")
+            .SetUsage(vk::BufferUsageFlagBits::eVertexBuffer)
             .SetSize(normals.size() * sizeof(glm::vec3))
-            .SetUsage(Buffer::Usage::Vertex | Buffer::Usage::Write)
+            .EnableWriteWithStaging()
             .Build();
-    normalBuffer->Write(GetQueue(), (void*)normals.data());
+    normalBuffer->WriteWithStaging(GetCommandEncoder(), normals.data());
 
-    indexBuffer = GetGFX()->CreateBuffer()
-        .SetLabel(chunkName + " Index Buffer")
-        .SetSize(indices.size() * sizeof(uint32_t))
-        .SetUsage(Buffer::Usage::Index | Buffer::Usage::Write)
-        .Build();
-    indexBuffer->Write(GetQueue(), (void*)indices.data());
+    indexBuffer = dvk::Buffer::Create(GetDevice())
+            .SetLabel(chunkName + " Index Buffer")
+            .SetUsage(vk::BufferUsageFlagBits::eIndexBuffer)
+            .SetSize(indices.size() * sizeof(uint32_t))
+            .EnableWriteWithStaging()
+            .Build();
+    indexBuffer->WriteWithStaging(GetCommandEncoder(), indices.data());
 
     auto translation = glm::translate(glm::identity<glm::mat4>(), glm::vec3(
-        (float)(pos.x * chunkSize) * cellSize,
+        static_cast<float>(pos.x * chunkSize) * cellSize,
         0.0f,
-        (float)(-pos.z * chunkSize) * cellSize
+        static_cast<float>(-pos.z * chunkSize) * cellSize
     ));
 
-    auto uniformBuffer = GetGFX()->CreateBuffer()
+    auto uniformBuffer = dvk::Buffer::Create(GetDevice())
         .SetLabel(chunkName + " Uniform Buffer")
+        .SetUsage(vk::BufferUsageFlagBits::eUniformBuffer)
         .SetSize(sizeof(ChunkUniforms))
-        .SetUsage(Buffer::Usage::Uniform | Buffer::Usage::Write)
+        .EnableWriteWithStaging()
         .Build();
     ChunkUniforms uniforms {
         .modelMatrix = glm::translate(glm::identity<glm::mat4>(), glm::vec3(
-            (float)(pos.x * chunkSize) * cellSize,
+            static_cast<float>(pos.x * chunkSize) * cellSize,
             0.0f,
-            (float)(-pos.z * chunkSize) * cellSize
+            static_cast<float>(-pos.z * chunkSize) * cellSize
         )),
     };
-    uniformBuffer->Write(GetQueue(), &uniforms);
+    uniformBuffer->WriteWithStaging(GetCommandEncoder(), &uniforms);
 
-    bindSet = bindSetLayout->Instantiate()
-        .SetLabel(chunkName + " Bind Set")
-        .SetEntry(0, { BindSet::Entry::Buffer {
-            .buffer = uniformBuffer,
-            .size = uniformBuffer->GetSize(),
-        }})
-        .Build();
+    bindSet = dvk::BindSet::Create(GetDevice(), bindPool, bindSetLayout, chunkName + " Bind Set");
+    // TODO: Need to recycle bind sets because they are finite in amount. Should replace with draw indirect
+
+    dvk::Binder()
+        .BindBuffer(0)
+            .SetBuffer(uniformBuffer)
+            .FinishBuffer()
+        .Update(bindSet);
 }
 
-void Chunk::Draw(SLGL::Graphics::RenderEncoder* renderEncoder) {
-    renderEncoder->SetIndexBuffer(indexBuffer, RenderEncoder::IndexFormat::Uint32);
-    renderEncoder->SetVertexBuffer(0, positionBuffer);
-    renderEncoder->SetVertexBuffer(1, normalBuffer);
-    renderEncoder->SetBindSet(2, bindSet);
-    renderEncoder->DrawIndexed(indexCount);
+void Chunk::Draw(const dvk::PipelineLayout::Ref& pipelineLayout, const vk::raii::CommandBuffer& commandBuffer) const {
+    commandBuffer.bindIndexBuffer(indexBuffer->GetBuffer(), 0, vk::IndexType::eUint32);
+    commandBuffer.bindVertexBuffers(0, *positionBuffer->GetBuffer(), { 0 });
+    commandBuffer.bindVertexBuffers(1, *normalBuffer->GetBuffer(), { 0 });
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout->GetPipelineLayout(), 2, *bindSet->GetDescriptorSet(), nullptr);
+    commandBuffer.drawIndexed(indexCount, 1, 0, 0, 0);
 }
 
 Terrain::Terrain(int seed) : seed(seed) {
-    chunkBindSetLayout = GetGFX()->CreateBindSetLayout()
-            .SetLabel("Terrain Chunk")
-            .AddEntry(0, {
-                .type = BindSet::Layout::Entry::Type::Buffer,
-                .buffer = {
-                    .type = BindSet::Layout::Entry::Buffer::Type::Uniform,
-                    .minSize = sizeof(ChunkUniforms),
-                },
-            })
-            .Build();
-
-    auto terrainBindSetLayout = GetGFX()->CreateBindSetLayout()
-        .SetLabel("Terrain")
-        .AddEntry(0, {
-            .type = BindSet::Layout::Entry::Type::Buffer,
-            .buffer = {
-                .type = BindSet::Layout::Entry::Buffer::Type::Uniform,
-                .minSize = sizeof(TerrainUniforms),
-            },
-        })
-        .AddEntry(1, { .type = BindSet::Layout::Entry::Type::Texture, .texture = {} })
-        .AddEntry(2, { .type = BindSet::Layout::Entry::Type::Texture, .texture = {} })
-        .AddEntry(3, { .type = BindSet::Layout::Entry::Type::Texture, .texture = {} })
-        .AddEntry(4, { .type = BindSet::Layout::Entry::Type::Texture, .texture = {} })
-        .AddEntry(5, { .type = BindSet::Layout::Entry::Type::Sampler })
+    chunkBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
+        .SetLabel("Terrain Chunk")
+        .AddEntry(0)
+            .SetType(vk::DescriptorType::eUniformBuffer)
+            .SetStage(vk::ShaderStageFlagBits::eVertex)
+            .FinishEntry()
         .Build();
 
-    auto terrainUniformBuffer = GetGFX()->CreateBuffer()
+    auto terrainBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
+        .SetLabel("Terrain")
+        .AddEntry(0).SetType(vk::DescriptorType::eUniformBuffer).SetStage(vk::ShaderStageFlagBits::eFragment).FinishEntry()
+        .AddEntry(1).SetType(vk::DescriptorType::eSampledImage).SetStage(vk::ShaderStageFlagBits::eFragment).FinishEntry()
+        .AddEntry(2).SetType(vk::DescriptorType::eSampledImage).SetStage(vk::ShaderStageFlagBits::eFragment).FinishEntry()
+        .AddEntry(3).SetType(vk::DescriptorType::eSampledImage).SetStage(vk::ShaderStageFlagBits::eFragment).FinishEntry()
+        .AddEntry(4).SetType(vk::DescriptorType::eSampledImage).SetStage(vk::ShaderStageFlagBits::eFragment).FinishEntry()
+        .AddEntry(5).SetType(vk::DescriptorType::eSampler).SetStage(vk::ShaderStageFlagBits::eFragment).FinishEntry()
+        .Build();
+
+    uniformBuffer = dvk::Buffer::Create(GetDevice())
         .SetLabel("Terrain Uniform Buffer")
+        .SetUsage(vk::BufferUsageFlagBits::eUniformBuffer)
         .SetSize(sizeof(TerrainUniforms))
-        .SetUsage(Buffer::Usage::Uniform | Buffer::Usage::Write)
+        .EnableWriteWithStaging()
         .Build();
     TerrainUniforms terrainUniforms {
         .tiling = 0.125f,
         .ambientIntensity = 2.0f,
     };
-    terrainUniformBuffer->Write(GetQueue(), &terrainUniforms);
+    uniformBuffer->WriteWithStaging(GetCommandEncoder(), &terrainUniforms);
 
-    auto albedoTexture = GetGFX()->CreateTexture("Terrain Albedo", GetQueue(), LoadImage(TERRAIN_ALBEDO_TEXTURE_PATH, 3, Data::Image::ColorSpace::SRGB));
-    auto metallicTexture = GetGFX()->CreateTexture("Terrain Metallic", GetQueue(), LoadImage(TERRAIN_METALLIC_TEXTURE_PATH));
-    auto roughnessTexture = GetGFX()->CreateTexture("Terrain Roughness", GetQueue(), LoadImage(TERRAIN_ROUGHNESS_TEXTURE_PATH));
-    auto aoTexture = GetGFX()->CreateTexture("Terrain AO", GetQueue(), LoadImage(TERRAIN_AO_TEXTURE_PATH));
-    auto sampler = GetGFX()->CreateSampler()
+    albedoTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Albedo", LoadImage(TERRAIN_ALBEDO_TEXTURE_PATH, 4, Data::Image::ColorSpace::SRGB))).Build();
+    metallicTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Metallic", LoadImage(TERRAIN_METALLIC_TEXTURE_PATH, 1))).Build();
+    roughnessTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Roughness", LoadImage(TERRAIN_ROUGHNESS_TEXTURE_PATH, 1))).Build();
+    aoTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain AO", LoadImage(TERRAIN_AO_TEXTURE_PATH, 1))).Build();
+    sampler = dvk::Sampler::Create(GetDevice())
         .SetLabel("Terrain Sampler")
-        .SetAddressModeU(Sampler::AddressMode::Repeat)
-        .SetAddressModeV(Sampler::AddressMode::Repeat)
-        .SetAddressModeW(Sampler::AddressMode::Repeat)
+        .SetAddressMode(vk::SamplerAddressMode::eRepeat)
         .Build();
 
-    bindSet = terrainBindSetLayout->Instantiate()
-        .SetLabel("Terrain")
-        .SetEntry(0, { BindSet::Entry::Buffer {
-            .buffer = terrainUniformBuffer,
-            .size = terrainUniformBuffer->GetSize(),
-        }})
-        .SetEntry(1, { BindSet::Entry::TextureView {
-            .textureView = albedoTexture->CreateView().Build(),
-        }})
-        .SetEntry(2, { BindSet::Entry::TextureView {
-            .textureView = metallicTexture->CreateView().Build(),
-        }})
-        .SetEntry(3, { BindSet::Entry::TextureView {
-            .textureView = roughnessTexture->CreateView().Build(),
-        }})
-        .SetEntry(4, { BindSet::Entry::TextureView {
-            .textureView = aoTexture->CreateView().Build(),
-        }})
-        .SetEntry(5, { BindSet::Entry::Sampler {
-            .sampler = sampler,
-        }})
-        .Build();
+    bindSet = dvk::BindSet::Create(GetDevice(), GetBindPool(), terrainBindSetLayout, "Terrain");
 
-    shaderPipelineLayout = GetGFX()->CreateShaderPipelineLayout()
+    dvk::Binder()
+        .BindBuffer(0).SetBuffer(uniformBuffer).FinishBuffer()
+        .BindTexture(1).SetTextureView(albedoTextureView).FinishTexture()
+        .BindTexture(2).SetTextureView(metallicTextureView).FinishTexture()
+        .BindTexture(3).SetTextureView(roughnessTextureView).FinishTexture()
+        .BindTexture(4).SetTextureView(aoTextureView).FinishTexture()
+        .BindSampler(5).SetSampler(sampler).FinishSampler()
+        .Update(bindSet);
+
+    shaderPipelineLayout = dvk::PipelineLayout::Create(GetDevice())
         .SetLabel("Terrain")
         .AddBindSetLayout(GetGlobalBindSetLayout())
         .AddBindSetLayout(terrainBindSetLayout)
         .AddBindSetLayout(chunkBindSetLayout)
         .Build();
 
-    Data::Shader shaderData {
-        .language = SLGL::Data::Shader::Language::WGSL,
-        .source = terrainShaderCode,
-    };
-    auto shaderSource = GetGFX()->CreateShaderSource(shaderData);
-    auto shaderModule = GetGFX()->CreateShaderModule()
+    auto shader = dvk::Shader::LoadFile(GetDevice(), TERRAIN_SHADER_PATH, "Terrain");
+
+    shaderPipeline = dvk::GraphicsPipeline::Create(GetDevice(), shaderPipelineLayout)
         .SetLabel("Terrain")
-        .SetSource(shaderSource)
+        .SetVertexInput({
+            vk::VertexInputBindingDescription {
+                .binding = 0,
+                .stride = sizeof(glm::vec3),
+                .inputRate = vk::VertexInputRate::eVertex,
+            },
+            vk::VertexInputBindingDescription {
+                .binding = 1,
+                .stride = sizeof(glm::vec3),
+                .inputRate = vk::VertexInputRate::eVertex,
+            },
+        }, {
+            vk::VertexInputAttributeDescription {
+                .location = 0,
+                .binding = 0,
+                .format = vk::Format::eR32G32B32Sfloat,
+                .offset = 0,
+            },
+            vk::VertexInputAttributeDescription {
+                .location = 1,
+                .binding = 1,
+                .format = vk::Format::eR32G32B32Sfloat,
+                .offset = 0,
+            },
+        })
+        .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "vs_main").FinishStage()
+        .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "fs_main").FinishStage()
+        .EnableDepth(GetDepthFormat())
+        .EnableMultisample(GetMultisampleCount())
+        .SetSingleAttachment(GetRenderTextureFormat())
         .Build();
 
-    shaderPipeline = GetGFX()->CreateShaderRenderPipeline(shaderPipelineLayout)
-        .SetLabel("Terrain")
-        .SetVertex({
-            .module = shaderModule,
-            .entry = "vs_main",
-            .buffers = {
-                ShaderPipeline::Render::Vertex::Buffer {
-                    .stride = sizeof(glm::vec3),
-                    .attributes = {
-                        ShaderPipeline::Render::Vertex::Buffer::Attribute {
-                            .format = SLGL::Graphics::ShaderPipeline::Render::Vertex::Buffer::Attribute::Format::Float32x3,
-                            .location = 0,
-                        },
-                    },
-                },
-                ShaderPipeline::Render::Vertex::Buffer {
-                    .stride = sizeof(glm::vec3),
-                    .attributes = {
-                        ShaderPipeline::Render::Vertex::Buffer::Attribute {
-                            .format = SLGL::Graphics::ShaderPipeline::Render::Vertex::Buffer::Attribute::Format::Float32x3,
-                            .location = 1,
-                        },
-                    },
-                },
-            },
-        })
-        .SetPrimitive({
-            .cullMode = ShaderPipeline::Render::Primitive::CullMode::None,
-        })
-        .SetDepthStencil({ })
-        .SetMultisample({
-            .count = GetMultisampleCount(),
-        })
-        .SetFragment({
-            .module = shaderModule,
-            .entry = "fs_main",
-            .targets = {
-                ShaderPipeline::Render::Fragment::ColorTarget {
-                    .surfaceFormat = GetRenderTextureSurfaceFormat(),
-                },
-            },
-        })
+    chunkBindPool = dvk::BindPool::Create(GetDevice())
+        .SetLabel("Terrain Chunks")
+        .SetMaxSets(viewDistance * viewDistance)
+        .AddEntry(vk::DescriptorType::eUniformBuffer, viewDistance * viewDistance)
         .Build();
 }
 
@@ -250,11 +221,11 @@ void Terrain::Tick(glm::vec3 playerPos) {
     }
 }
 
-void Terrain::Draw(RenderEncoder* renderEncoder) {
-    renderEncoder->SetPipeline(shaderPipeline);
-    renderEncoder->SetBindSet(1, bindSet);
+void Terrain::Draw(const vk::raii::CommandBuffer& commandBuffer) {
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shaderPipeline->GetPipeline());
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shaderPipelineLayout->GetPipelineLayout(), 1, *bindSet->GetDescriptorSet(), nullptr);
     for (const auto& chunkPos : visibleChunks) {
-        chunks.at(chunkPos).Draw(renderEncoder);
+        chunks.at(chunkPos).Draw(shaderPipelineLayout, commandBuffer);
     }
 }
 
@@ -333,5 +304,5 @@ void Terrain::generateChunk(GridPos pos) {
         normal = glm::normalize(normal);
     }
 
-    chunks.emplace(std::piecewise_construct, std::forward_as_tuple(pos), std::forward_as_tuple(pos, chunkBindSetLayout, positions, normals, indices));
+    chunks.emplace(std::piecewise_construct, std::forward_as_tuple(pos), std::forward_as_tuple(pos, chunkBindPool, chunkBindSetLayout, positions, normals, indices));
 }

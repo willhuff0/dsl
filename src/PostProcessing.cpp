@@ -127,15 +127,15 @@ void PostProcessing::ResizeRenderTexture(glm::uvec2 newSize) {
 
     binder.BindTexture(2)
         .SetTextureView(inputRenderTextureView)
-        .FinishImage()
+        .FinishTexture()
         .Update(inputBindSet);
     binder.BindTexture(2)
         .SetTextureView(renderTextureView1)
-        .FinishImage()
+        .FinishTexture()
         .Update(bindSet1);
     binder.BindTexture(2)
         .SetTextureView(renderTextureView2)
-        .FinishImage()
+        .FinishTexture()
         .Update(bindSet2);
 }
 
