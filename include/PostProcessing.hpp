@@ -38,6 +38,7 @@ private:
     dvk::GraphicsPipeline::Ref splitBrightnessPipeline;
     dvk::GraphicsPipeline::Ref blurHorizontalPipeline;
     dvk::GraphicsPipeline::Ref blurVerticalPipeline;
+    dvk::GraphicsPipeline::Ref blitPipeline;
     dvk::GraphicsPipeline::Ref colorCorrectionPipeline;
 
     dvk::BindSet::Ref inputBindSet;

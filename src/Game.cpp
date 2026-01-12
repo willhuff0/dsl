@@ -13,10 +13,10 @@ Game::Game(Platform* platform, Window::Ref window, dvk::Surface& surface, dvk::P
       presenter(presenter),
       flyCamera(static_cast<GLFWwindow*>(this->window->GetNativeHandle()), glm::vec3(0.01f, 26.0f, 0.01f)) {
     postProcessing = std::make_unique<PostProcessing>();
-    skybox = std::make_unique<Skybox>(Skybox::FromEquirectangularMap(LoadHDRI(SKYBOX_HDRI_PATH)));
-    terrain = std::make_unique<Terrain>(6767);
+    // skybox = std::make_unique<Skybox>(Skybox::FromEquirectangularMap(LoadHDRI(SKYBOX_HDRI_PATH)));
+    terrain = std::make_unique<Terrain>();
 
-    SetSkybox(skybox->GetIrradianceMap(), skybox->GetRadianceMap(), skybox->GetBrdfLut());
+    // SetSkybox(skybox->GetIrradianceMap(), skybox->GetRadianceMap(), skybox->GetBrdfLut());
 
     // meshRenderer = std::make_unique<MeshRenderer>();
 
@@ -30,7 +30,7 @@ void Game::MainLoop() {
     // Tick
 
     flyCamera.Tick();
-    terrain->Tick(flyCamera.GetPos());
+    // terrain->Tick(flyCamera.GetPos());
 
     // Draw
     auto& onSurfaceReadySemaphore = GetCommandEncoder().WaitForNextFrame();
@@ -85,8 +85,8 @@ void Game::MainLoop() {
     commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(presenter.GetExtent().width), static_cast<float>(presenter.GetExtent().height), 0.0f, 1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), presenter.GetExtent()));
 
-    terrain->Draw(commandBuffer);
-    skybox->Draw(flyCamera.GetProjMat(), flyCamera.GetViewMat(), commandBuffer, frameIndex);
+    // terrain->Draw(commandBuffer);
+    // skybox->Draw(flyCamera.GetProjMat(), flyCamera.GetViewMat(), commandBuffer, frameIndex);
 
     commandBuffer.endRendering();
 

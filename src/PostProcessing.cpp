@@ -10,6 +10,8 @@ constexpr float bloomThreshold = 1.0f;
 constexpr float acesExposure = 1.2f;
 constexpr auto toneMappingMode = ToneMappingMode::ACES;
 
+constexpr vk::Extent2D debugTextureExtent = { 512, 512 };
+
 PostProcessing::PostProcessing() {
     bindSetLayout = dvk::BindSetLayout::Create(GetDevice())
         .SetLabel("Post Processing")
@@ -53,9 +55,16 @@ PostProcessing::PostProcessing() {
         .AddBindSetLayout(bindSetLayout)
         .Build();
 
+    auto blitPipelineLayout = dvk::PipelineLayout::Create(GetDevice())
+        .SetLabel("Post Processing - Blit")
+        .AddBindSetLayout(bindSetLayout)
+        .AddBindSetLayout(GetDebugTextureBindSetLayout())
+        .Build();
+
     auto fullscreenVertexShader = dvk::Shader::LoadFile(GetDevice(), PP_FULLSCREEN_VERTEX_SHADER_PATH, "Post Processing - Vertex");
     auto splitBrightnessShader = dvk::Shader::LoadFile(GetDevice(), PP_SPLIT_BRIGHTNESS_SHADER_PATH, "Post Processing - Split Brightness");
     auto blurShader = dvk::Shader::LoadFile(GetDevice(), PP_BLUR_SHADER_PATH, "Post Processing - Blur");
+    auto blitShader = dvk::Shader::LoadFile(GetDevice(), PP_BLIT_SHADER_PATH, "Post Processing - Blit");
     auto colorCorrectionShader = dvk::Shader::LoadFile(GetDevice(), PP_COLOR_CORRECTION_SHADER_PATH, "Post Processing - Color Correction");
 
     splitBrightnessPipeline = dvk::GraphicsPipeline::Create(GetDevice(), singlePipelineLayout)
@@ -81,6 +90,13 @@ PostProcessing::PostProcessing() {
             .SetConstant(0, 0)
             .FinishStage()
         .SetSingleAttachment(GetRenderTextureFormat())
+        .Build();
+
+    blitPipeline = dvk::GraphicsPipeline::Create(GetDevice(), blitPipelineLayout)
+        .SetLabel("Post Processing - Blit")
+        .AddStage(vk::ShaderStageFlagBits::eVertex, blitShader, "vs_main").FinishStage()
+        .AddStage(vk::ShaderStageFlagBits::eFragment, blitShader, "fs_main").FinishStage()
+        .SetSingleAttachment(GetDisplaySurfaceFormat())
         .Build();
 
     colorCorrectionPipeline = dvk::GraphicsPipeline::Create(GetDevice(), doublePipelineLayout)
@@ -147,66 +163,66 @@ dvk::TextureView::Ref PostProcessing::GetPostProcessingInputTextureView() { retu
 
 void PostProcessing::PostProcessingRenderPass(const vk::raii::CommandBuffer& commandBuffer, const vk::raii::ImageView& surfaceImageView, vk::Extent2D surfaceExtent) {
     inputRenderTextureView->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-    renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+    // renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
 
-    {
-        vk::RenderingAttachmentInfo attachmentInfo = {
-            .imageView   = renderTextureView1->GetImageView(),
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp      = vk::AttachmentLoadOp::eClear,
-            .storeOp     = vk::AttachmentStoreOp::eStore,
-            .clearValue  = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
-        };
-        commandBuffer.beginRendering({
-            .renderArea           = { .offset = { 0, 0 }, .extent = surfaceExtent },
-            .layerCount           = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &attachmentInfo,
-        });
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, splitBrightnessPipeline->GetPipeline());
-        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, singlePipelineLayout->GetPipelineLayout(), 0, *inputBindSet->GetDescriptorSet(), nullptr);
-        commandBuffer.draw(6, 1, 0, 0);
-        commandBuffer.endRendering();
-    }
-
-    renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-    renderTextureView2->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-
-    bool horizontal = true;
-    std::string pingPongLabels[2] = { "Horizontal (1 -> 2)", "Vertical (2 -> 1)" };
-    dvk::TextureView::Ref pingPongTargets[2] = { renderTextureView1, renderTextureView2 };
-    dvk::BindSet::Ref pingPongBindSets[2] = { bindSet2, bindSet1 };
-    dvk::GraphicsPipeline::Ref pingPongPipelines[2] = { blurVerticalPipeline, blurHorizontalPipeline };
-
-    for (int i = 0; i < numBlurIterations * 2; i++) {
-        vk::RenderingAttachmentInfo attachmentInfo = {
-            .imageView   = pingPongTargets[horizontal]->GetImageView(),
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp      = vk::AttachmentLoadOp::eClear,
-            .storeOp     = vk::AttachmentStoreOp::eStore,
-            .clearValue  = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
-        };
-        commandBuffer.beginRendering({
-            .renderArea           = { .offset = { 0, 0 }, .extent = surfaceExtent },
-            .layerCount           = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &attachmentInfo,
-        });
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pingPongPipelines[horizontal]->GetPipeline());
-        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, singlePipelineLayout->GetPipelineLayout(), 0, *pingPongBindSets[horizontal]->GetDescriptorSet(), nullptr);
-        commandBuffer.draw(6, 1, 0, 0);
-        commandBuffer.endRendering();
-
-        if (horizontal) {
-            renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-            renderTextureView2->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        } else {
-            renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-            renderTextureView2->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-        }
-
-        horizontal = !horizontal;
-    }
+    // {
+    //     vk::RenderingAttachmentInfo attachmentInfo = {
+    //         .imageView   = renderTextureView1->GetImageView(),
+    //         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+    //         .loadOp      = vk::AttachmentLoadOp::eClear,
+    //         .storeOp     = vk::AttachmentStoreOp::eStore,
+    //         .clearValue  = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
+    //     };
+    //     commandBuffer.beginRendering({
+    //         .renderArea           = { .offset = { 0, 0 }, .extent = surfaceExtent },
+    //         .layerCount           = 1,
+    //         .colorAttachmentCount = 1,
+    //         .pColorAttachments    = &attachmentInfo,
+    //     });
+    //     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, splitBrightnessPipeline->GetPipeline());
+    //     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, singlePipelineLayout->GetPipelineLayout(), 0, *inputBindSet->GetDescriptorSet(), nullptr);
+    //     commandBuffer.draw(6, 1, 0, 0);
+    //     commandBuffer.endRendering();
+    // }
+    //
+    // renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    // renderTextureView2->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+    //
+    // bool horizontal = true;
+    // std::string pingPongLabels[2] = { "Horizontal (1 -> 2)", "Vertical (2 -> 1)" };
+    // dvk::TextureView::Ref pingPongTargets[2] = { renderTextureView1, renderTextureView2 };
+    // dvk::BindSet::Ref pingPongBindSets[2] = { bindSet2, bindSet1 };
+    // dvk::GraphicsPipeline::Ref pingPongPipelines[2] = { blurVerticalPipeline, blurHorizontalPipeline };
+    //
+    // for (int i = 0; i < numBlurIterations * 2; i++) {
+    //     vk::RenderingAttachmentInfo attachmentInfo = {
+    //         .imageView   = pingPongTargets[horizontal]->GetImageView(),
+    //         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+    //         .loadOp      = vk::AttachmentLoadOp::eClear,
+    //         .storeOp     = vk::AttachmentStoreOp::eStore,
+    //         .clearValue  = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
+    //     };
+    //     commandBuffer.beginRendering({
+    //         .renderArea           = { .offset = { 0, 0 }, .extent = surfaceExtent },
+    //         .layerCount           = 1,
+    //         .colorAttachmentCount = 1,
+    //         .pColorAttachments    = &attachmentInfo,
+    //     });
+    //     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pingPongPipelines[horizontal]->GetPipeline());
+    //     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, singlePipelineLayout->GetPipelineLayout(), 0, *pingPongBindSets[horizontal]->GetDescriptorSet(), nullptr);
+    //     commandBuffer.draw(6, 1, 0, 0);
+    //     commandBuffer.endRendering();
+    //
+    //     if (horizontal) {
+    //         renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+    //         renderTextureView2->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    //     } else {
+    //         renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    //         renderTextureView2->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+    //     }
+    //
+    //     horizontal = !horizontal;
+    // }
 
     {
         vk::RenderingAttachmentInfo attachmentInfo = {
@@ -227,5 +243,25 @@ void PostProcessing::PostProcessingRenderPass(const vk::raii::CommandBuffer& com
         commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, doublePipelineLayout->GetPipelineLayout(), 1, *bindSet1->GetDescriptorSet(), nullptr);
         commandBuffer.draw(6, 1, 0, 0);
         commandBuffer.endRendering();
+    }
+
+    if (GetDebugTextureView() != nullptr) {
+        // vk::RenderingAttachmentInfo attachmentInfo = {
+        //     .imageView   = surfaceImageView,
+        //     .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        //     .loadOp      = vk::AttachmentLoadOp::eLoad,
+        //     .storeOp     = vk::AttachmentStoreOp::eStore,
+        // };
+        // commandBuffer.beginRendering({
+        //     .renderArea           = { .offset = { 0, 0 }, .extent = debugTextureExtent },
+        //     .layerCount           = 1,
+        //     .colorAttachmentCount = 1,
+        //     .pColorAttachments    = &attachmentInfo,
+        // });
+        // commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, blitPipeline->GetPipeline());
+        // commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blitPipeline->GetLayout()->GetPipelineLayout(), 0, *bindSet2->GetDescriptorSet(), nullptr);
+        // commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blitPipeline->GetLayout()->GetPipelineLayout(), 1, *GetDebugTextureBindSet()->GetDescriptorSet(), nullptr);
+        // commandBuffer.draw(6, 1, 0, 0);
+        // commandBuffer.endRendering();
     }
 }

@@ -1,6 +1,6 @@
-#include <slgl/runtime/game/MeshRenderer.hpp>
+#include <MeshRenderer.hpp>
 
-#include <slgl/runtime/game/Provider.hpp>
+#include <Provider.hpp>
 
 static const uint64_t ResizableBufferStartSize = 1024;
 static const uint64_t ResizableBufferScaleFactor = 2;

@@ -22,7 +22,10 @@
 
 #define TERRAIN_SHADER_PATH RESOURCE_BASEPATH "/shaders/terrain/Terrain.spv"
 
+#define TERRAIN_GENERATOR_SHADER_PATH RESOURCE_BASEPATH "/shaders/terrain/TerrainGenerator.spv"
+
 #define PP_FULLSCREEN_VERTEX_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/FullscreenVertex.spv"
 #define PP_SPLIT_BRIGHTNESS_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/SplitBrightness.spv"
 #define PP_BLUR_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/Blur.spv"
+#define PP_BLIT_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/Blit.spv"
 #define PP_COLOR_CORRECTION_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/ColorCorrection.spv"

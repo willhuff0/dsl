@@ -1,6 +1,7 @@
 #include "Provider.hpp"
 
 #include <string>
+#include <utility>
 
 static Platform* platformBackend;
 static dvk::Device* graphicsBackend;
@@ -17,6 +18,10 @@ static std::array<dvk::BindSet::Ref, FRAMES_IN_FLIGHT> globalBindSet;
 static dvk::Sampler::Ref environmentSampler;
 
 static constexpr auto renderTextureFormat = vk::Format::eR16G16B16A16Sfloat;
+
+static dvk::BindSetLayout::Ref debugTextureBindSetLayout;
+static dvk::BindSet::Ref debugTextureBindSet;
+static dvk::TextureView::Ref debugTextureView;
 
 static vk::SampleCountFlagBits getMaxUsableSampleCount() {
     vk::PhysicalDeviceProperties physicalDeviceProperties = GetDevice().GetPhysicalDevice().getProperties();
@@ -44,6 +49,7 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
         .AddEntry(vk::DescriptorType::eUniformBuffer, 128)
         .AddEntry(vk::DescriptorType::eSampledImage, 64)
         .AddEntry(vk::DescriptorType::eSampler, 32)
+        .AddEntry(vk::DescriptorType::eStorageImage, 1)
         .Build();
 
     globalBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
@@ -84,6 +90,15 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
         .Build();
 
     sampleCount = getMaxUsableSampleCount();
+
+    debugTextureBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
+        .SetLabel("Debug Texture Blit")
+        .AddEntry(0)
+            .SetType(vk::DescriptorType::eSampledImage)
+            .SetStage(vk::ShaderStageFlagBits::eFragment)
+            .FinishEntry()
+        .Build();
+    debugTextureBindSet = dvk::BindSet::Create(GetDevice(), GetBindPool(), debugTextureBindSetLayout, "Debug Texture Blit");
 }
 
 void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex) {
@@ -139,3 +154,16 @@ vk::Format GetDisplaySurfaceFormat() { return graphicsSurfaceFormat; }
 
 vk::Format GetDepthFormat() { return vk::Format::eD32Sfloat; }
 vk::SampleCountFlagBits GetMultisampleCount() { return sampleCount; }
+
+void SetDebugTextureView(dvk::TextureView::Ref debugTextureView_) {
+    debugTextureView = std::move(debugTextureView_);
+    dvk::Binder()
+        .BindTexture(0)
+            .SetImageLayout(vk::ImageLayout::eGeneral)
+            .SetTextureView(debugTextureView)
+            .FinishTexture()
+        .Update(debugTextureBindSet);
+}
+const dvk::TextureView::Ref& GetDebugTextureView() { return debugTextureView; }
+const dvk::BindSetLayout::Ref& GetDebugTextureBindSetLayout() { return debugTextureBindSetLayout; }
+const dvk::BindSet::Ref& GetDebugTextureBindSet() { return debugTextureBindSet; }

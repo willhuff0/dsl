@@ -33,3 +33,8 @@ vk::Format GetDisplaySurfaceFormat();
 
 vk::Format GetDepthFormat();
 vk::SampleCountFlagBits GetMultisampleCount();
+
+void SetDebugTextureView(dvk::TextureView::Ref debugTextureView);
+const dvk::TextureView::Ref& GetDebugTextureView();
+const dvk::BindSetLayout::Ref& GetDebugTextureBindSetLayout();
+const dvk::BindSet::Ref& GetDebugTextureBindSet();

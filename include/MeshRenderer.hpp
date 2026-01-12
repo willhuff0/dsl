@@ -1,11 +1,9 @@
 #pragma once
 
-#include <slgl/runtime/graphics/Graphics.hpp>
+#include <dvk/dvk.hpp>
 
 #include <cstdint>
 #include <unordered_map>
-
-using namespace SLGL::Graphics;
 
 class ResizableBuffer {
 public:
