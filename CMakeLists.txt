@@ -14,10 +14,12 @@ find_package(glfw3 3.4 REQUIRED)
 #)
 #FetchContent_MakeAvailable(dvk)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../dvk ${CMAKE_CURRENT_BINARY_DIR}/dvk)
+find_package(assimp REQUIRED)
 target_link_libraries(zombies
     PRIVATE
         glfw
         dvk
+        assimp::assimp
 )
 
 target_sources(zombies
@@ -37,6 +39,8 @@ target_sources(zombies
 #        src/Vehicle.cpp
 #        src/MeshRenderer.cpp
         src/Terrain.cpp
+        src/TempModelLoader.cpp
+        src/HotReload.cpp
     PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
@@ -60,6 +64,8 @@ target_sources(zombies
 #        include/Vehicle.hpp
 #        include/MeshRenderer.hpp
         include/Terrain.hpp
+        include/TempModelLoader.hpp
+        include/HotReload.hpp
 )
 
 target_include_directories(zombies

@@ -3,6 +3,7 @@
 #include <Platform.hpp>
 #include <dvk/dvk.hpp>
 
+#include "HotReload.hpp"
 #include "FlyCamera.hpp"
 #include "PostProcessing.hpp"
 #include "Terrain.hpp"
@@ -10,6 +11,8 @@
 // #include "MeshRenderer.hpp"
 
 #include <memory>
+#include <chrono>
+#include <mutex>
 
 class Game {
 public:
@@ -20,6 +23,12 @@ public:
 private:
     void resizeSurface();
     void regenerateRenderTextures();
+
+#if !defined(NDEBUG)
+    Watcher shaderSrcWatcher;
+    std::mutex shaderRecompileMutex;
+    std::chrono::time_point<std::chrono::high_resolution_clock> lastShaderRecompile;
+#endif
 
     Platform* platform;
     Window::Ref window;

@@ -1,7 +1,11 @@
 #pragma once
 
 #if !defined(NDEBUG)
+#define SRC_BASEPATH "../src"
 #define RESOURCE_BASEPATH "../res"
+
+#define SHADER_SRC_BASEPATH SRC_BASEPATH "/shaders"
+#define SHADER_RES_BASEPATH RESOURCE_BASEPATH "/shaders"
 #else
 #define RESOURCE_BASEPATH "./res"
 #endif
@@ -21,7 +25,9 @@
 #define TERRAIN_AO_TEXTURE_PATH RESOURCE_BASEPATH "/terrain/ao.jpg"
 
 #define TERRAIN_SHADER_PATH RESOURCE_BASEPATH "/shaders/terrain/Terrain.spv"
+#define TERRAIN_NORMALS_SHADER_PATH RESOURCE_BASEPATH "/shaders/terrain/TerrainNormals.spv"
 
+#define TERRAIN_CLIPMAP_MESH_SHADER_PREFIX_PATH RESOURCE_BASEPATH "/terrain/ClipMap_LOD_"
 #define TERRAIN_GENERATOR_SHADER_PATH RESOURCE_BASEPATH "/shaders/terrain/TerrainGenerator.spv"
 
 #define PP_FULLSCREEN_VERTEX_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/FullscreenVertex.spv"

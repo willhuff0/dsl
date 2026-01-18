@@ -14,6 +14,7 @@ struct alignas(16) GlobalUniforms {
 };
 
 void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder* commandEncoder, vk::Format surfaceFormat);
+void FreeProvider();
 
 void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex);
 void SetSkybox(const dvk::Texture::Ref& irradianceMap,

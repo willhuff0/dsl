@@ -38,8 +38,6 @@ float3 ImportanceSampleGGX(float2 Xi, float3 N, float roughness) {
 
     float3 H = float3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
 
-    // WGSL select(false, true, cond) vs ternary (cond ? true : false)
-    // select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 0.0, 1.0), abs(N.z) < 0.999)
     float3 up = (abs(N.z) < 0.999) ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
 
     float3 tangent = normalize(cross(up, N));
@@ -65,7 +63,7 @@ float4 fs_main(VertexOutput input) : SV_Target {
 
         float NdotL = max(dot(N, L), 0.0);
         if (NdotL > 0.0) {
-            prefilteredColor += u_cubeMap.SampleLevel(u_sampler, L * float3(-1, 1, 1), 0).rgb * NdotL; // FIXME: Check MipLevel logic. WGSL textureSampleLevel(..., level) -> HLSL SampleLevel(..., level). The WGSL code used 1.0? That seems odd for a radiance map generation, usually it samples base level. Changed to 0.
+            prefilteredColor += u_cubeMap.SampleLevel(u_sampler, L * float3(-1, 1, 1), 0).rgb * NdotL;
             totalWeight += NdotL;
         }
     }

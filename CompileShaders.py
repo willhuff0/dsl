@@ -10,4 +10,4 @@ for slang_file in SRC_DIR.rglob("*.slang"):
 
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
-    subprocess.run(["slangc", str(slang_file), "-target", "spirv", "-profile", "spirv_1_4", "-emit-spirv-directly", "-fvk-use-entrypoint-name", "-o", str(out_file)], check=True)
+    subprocess.run(["slangc", str(slang_file), "-target", "spirv", "-emit-spirv-directly", "-fvk-use-entrypoint-name", "-o", str(out_file)], check=True)

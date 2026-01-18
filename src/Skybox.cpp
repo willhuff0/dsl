@@ -4,6 +4,7 @@
 #include <utils/Paths.hpp>
 
 #include <string>
+#include <utility>
 
 static constexpr int IRRADIANCE_MAP_SIZE = 64;
 static constexpr int RADIANCE_MAP_SIZE = 512;
@@ -303,21 +304,19 @@ dvk::Texture::Ref CubeMapConverter::GenerateRadianceMap(const dvk::Texture::Ref&
             .FinishBuffer()
         .Update(convolutionPerMapBindSet);
 
-    return radianceMap;
-
     for (int i = 0; i < RADIANCE_MIPMAP_COUNT; i++) {
         ConvolutionUniforms uniforms {
             .roughness = static_cast<float>(i) / static_cast<float>(RADIANCE_MIPMAP_COUNT - 1),
         };
         convolutionUniformBuffer->CopyToAndFlush(&uniforms);
-        capture(convolutionPerMapBindSet, radianceMap, radianceShaderPipeline, i, i == 0, i == 6);
+        capture(convolutionPerMapBindSet, radianceMap, radianceShaderPipeline, i, i == 0, i == RADIANCE_MIPMAP_COUNT - 1);
     }
 
     return radianceMap;
 }
 
 void CubeMapConverter::capture(const dvk::BindSet::Ref& perMapBindSet, const dvk::Texture::Ref& target, dvk::GraphicsPipeline::Ref shaderPipeline, int mipMap, bool transitionLayoutStart , bool transitionLayoutEnd) {
-    vk::Extent2D targetExtent = { target->GetExtent().width, target->GetExtent().height };
+    vk::Extent2D targetExtent = { std::max(1u, target->GetExtent().width >> mipMap), std::max(1u, target->GetExtent().height >> mipMap) };
 
     std::array<dvk::TextureView::Ref, 6> cubeMapTextureViews;
     for (int i = 0; i < 6; i++) {
@@ -328,7 +327,7 @@ void CubeMapConverter::capture(const dvk::BindSet::Ref& perMapBindSet, const dvk
             .Build();
     }
 
-    GetCommandEncoder().ExecuteOneTime([&](const vk::raii::CommandBuffer& commandBuffer) {
+    GetCommandEncoder().ExecuteAndWait([&](const vk::raii::CommandBuffer& commandBuffer) {
         if (transitionLayoutStart) {
             target->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
         }
@@ -387,7 +386,7 @@ dvk::Texture::Ref EnvBrdfLutGenerator::GenerateBrdfLut(const std::string& label)
 
     auto textureView = dvk::TextureView::Create(GetDevice(), texture).Build();
 
-    GetCommandEncoder().ExecuteOneTime([&](const vk::raii::CommandBuffer& commandBuffer) {
+    GetCommandEncoder().ExecuteAndWait([&](const vk::raii::CommandBuffer& commandBuffer) {
         texture->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
 
         vk::RenderingAttachmentInfo attachmentInfo = {

@@ -18,12 +18,36 @@ static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset) {
     scrollDelta += yOffset;
 }
 
+static bool flyCamFocused = false;
+static void focusCallback(GLFWwindow* window, int focused) {
+    if (focused == GLFW_FALSE) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        flyCamFocused = false;
+    }
+}
+
+static void mouseCallback(GLFWwindow* window, int button, int action, int mods) {
+    if (glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_FALSE) return;
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    flyCamFocused = true;
+
+    int windowWidth, windowHeight;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+
+    double windowCenterX = (double) windowWidth / 2.0;
+    double windowCenterY = (double) windowHeight / 2.0;
+
+    glfwSetCursorPos(window, windowCenterX, windowCenterY);
+}
+
 FlyCamera::FlyCamera(GLFWwindow* window, glm::vec3 startPos) : window(window), pos(startPos) {
     if (glfwRawMouseMotionSupported()) {
         glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     }
 
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetWindowFocusCallback(window, focusCallback);
+    glfwSetMouseButtonCallback(window, mouseCallback);
+    // glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
@@ -39,7 +63,21 @@ FlyCamera::FlyCamera(GLFWwindow* window, glm::vec3 startPos) : window(window), p
 }
 
 void FlyCamera::Tick() {
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, true);
+    if (!flyCamFocused || glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_FALSE) return;
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE)) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+        int windowWidth, windowHeight;
+        glfwGetWindowSize(window, &windowWidth, &windowHeight);
+
+        double windowCenterX = (double) windowWidth / 2.0;
+        double windowCenterY = (double) windowHeight / 2.0;
+
+        glfwSetCursorPos(window, windowCenterX, windowCenterY);
+
+        flyCamFocused = false;
+        return;
+    }
 
     double time = glfwGetTime();
     double dt = time - lastTime;
@@ -109,7 +147,7 @@ void FlyCamera::Tick() {
     float nearClip = 0.1f;
     float farClip = 5000.0f;
     projMat = glm::perspective(FOV, aspectRatio, nearClip, farClip);
-    projMat[1][1] *= -1;
+    // projMat[1][1] *= -1;
 
     scrollDelta = 0.0;
 }

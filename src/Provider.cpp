@@ -1,6 +1,5 @@
 #include "Provider.hpp"
 
-#include <string>
 #include <utility>
 
 static Platform* platformBackend;
@@ -16,6 +15,9 @@ static dvk::BindSetLayout::Ref globalBindSetLayout;
 static dvk::Buffer::Refs<FRAMES_IN_FLIGHT> globalUniformsBuffer;
 static std::array<dvk::BindSet::Ref, FRAMES_IN_FLIGHT> globalBindSet;
 static dvk::Sampler::Ref environmentSampler;
+static dvk::TextureView::Ref irradianceView;
+static dvk::TextureView::Ref radianceView;
+static dvk::TextureView::Ref brdfLutView;
 
 static constexpr auto renderTextureFormat = vk::Format::eR16G16B16A16Sfloat;
 
@@ -49,14 +51,14 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
         .AddEntry(vk::DescriptorType::eUniformBuffer, 128)
         .AddEntry(vk::DescriptorType::eSampledImage, 64)
         .AddEntry(vk::DescriptorType::eSampler, 32)
-        .AddEntry(vk::DescriptorType::eStorageImage, 1)
+        .AddEntry(vk::DescriptorType::eStorageImage, 2)
         .Build();
 
     globalBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
         .SetLabel("Global")
         .AddEntry(0)
             .SetType(vk::DescriptorType::eUniformBuffer)
-            .SetStage(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment)
+            .SetStage(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eGeometry | vk::ShaderStageFlagBits::eFragment)
             .FinishEntry()
         .AddEntry(1)
             .SetType(vk::DescriptorType::eSampler)
@@ -87,6 +89,9 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
     environmentSampler = dvk::Sampler::Create(GetDevice())
         .SetLabel("Global Environment Sample")
         .SetAddressMode(vk::SamplerAddressMode::eClampToEdge)
+        // .SetAnisotropy(false, 1.0f)
+        .SetLodBounds(0.0f, 32.0f)
+        // .SetBorderColor(vk::BorderColor::eFloatTransparentBlack)
         .Build();
 
     sampleCount = getMaxUsableSampleCount();
@@ -101,6 +106,23 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
     debugTextureBindSet = dvk::BindSet::Create(GetDevice(), GetBindPool(), debugTextureBindSetLayout, "Debug Texture Blit");
 }
 
+void FreeProvider() {
+    globalBindSetLayout = nullptr;
+    environmentSampler = nullptr;
+    debugTextureBindSetLayout = nullptr;
+    debugTextureBindSet = nullptr;
+    debugTextureView = nullptr;
+
+    irradianceView = nullptr;
+    radianceView = nullptr;
+    brdfLutView = nullptr;
+
+    globalUniformsBuffer.fill(nullptr);
+    globalBindSet.fill(nullptr);
+
+    bindPool = nullptr;
+}
+
 void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex) {
     globalUniformsBuffer[frameIndex]->CopyToAndFlush(uniforms);
 }
@@ -108,6 +130,20 @@ void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex) {
 void SetSkybox(const dvk::Texture::Ref& irradianceMap,
                const dvk::Texture::Ref& radianceMap,
                const dvk::Texture::Ref& brdfLut) {
+    irradianceView = dvk::TextureView::Create(GetDevice(), irradianceMap)
+        .SetLabel("Global Irradiance CubeMap")
+        .SetType(vk::ImageViewType::eCube)
+        .Build();
+
+    radianceView = dvk::TextureView::Create(GetDevice(), radianceMap)
+        .SetLabel("Global Radiance CubeMap")
+        .SetType(vk::ImageViewType::eCube)
+        .Build();
+
+    brdfLutView = dvk::TextureView::Create(GetDevice(), brdfLut)
+        .SetLabel("Global Environment BRDF LUT")
+        .Build();
+
     globalBindSet = dvk::BindSet::Create<FRAMES_IN_FLIGHT>(GetDevice(), GetBindPool(), globalBindSetLayout);
     for (size_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
         dvk::Binder()
@@ -119,21 +155,13 @@ void SetSkybox(const dvk::Texture::Ref& irradianceMap,
                 .SetSampler(environmentSampler)
                 .FinishSampler()
             .BindTexture(2)
-                .SetTextureView(dvk::TextureView::Create(GetDevice(), irradianceMap)
-                    .SetLabel("Global Irradiance CubeMap")
-                    .SetType(vk::ImageViewType::eCube)
-                    .Build())
+                .SetTextureView(irradianceView)
                 .FinishTexture()
             .BindTexture(3)
-                .SetTextureView(dvk::TextureView::Create(GetDevice(), radianceMap)
-                    .SetLabel("Global Radiance CubeMap")
-                    .SetType(vk::ImageViewType::eCube)
-                    .Build())
+                .SetTextureView(radianceView)
                 .FinishTexture()
             .BindTexture(4)
-                .SetTextureView(dvk::TextureView::Create(GetDevice(), brdfLut)
-                    .SetLabel("Global Environment BRDF LUT")
-                    .Build())
+                .SetTextureView(brdfLutView)
                 .FinishTexture()
             .Update(globalBindSet[i]);
     }

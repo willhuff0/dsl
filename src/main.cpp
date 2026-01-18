@@ -18,11 +18,14 @@ int main() {
     dvk::CommandEncoder commandEncoder(device);
 
     SetupProvider(&platform, &device, &commandEncoder, presenter.GetFormat());
-    Game game(&platform, window, surface, presenter);
-    while (!window->ShouldClose()) {
-        game.MainLoop();
+    {
+        Game game(&platform, window, surface, presenter);
+        while (!window->ShouldClose()) {
+            game.MainLoop();
+        }
+        device.GetQueue().waitIdle();
     }
+    FreeProvider();
 
-    device.GetQueue().waitIdle();
     return 0;
 }
