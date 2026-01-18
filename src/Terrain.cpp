@@ -136,7 +136,7 @@ Terrain::Terrain() {
             .FinishEntry()
         .AddEntry(1)
             .SetType(vk::DescriptorType::eSampledImage)
-            .SetStage(vk::ShaderStageFlagBits::eFragment)
+            .SetStage(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment)
             .FinishEntry()
         .AddEntry(2)
             .SetType(vk::DescriptorType::eSampler)
@@ -207,35 +207,74 @@ Terrain::Terrain() {
             .EnableDepth(GetDepthFormat())
             .EnableMultisample(GetMultisampleCount())
             .Build();
+        graphicsWireframePipeline = dvk::GraphicsPipeline::Create(GetDevice(), graphicsPipelineLayout)
+            .SetLabel("Terrain Graphics Wireframe")
+            .SetVertexInput({ vk::VertexInputBindingDescription {
+                .binding = 0,
+                .stride = sizeof(glm::vec2),
+                .inputRate = vk::VertexInputRate::eVertex,
+            }}, {{ vk::VertexInputAttributeDescription {
+                .location = 0,
+                .binding = 0,
+                .format = vk::Format::eR32G32Sfloat,
+                .offset = 0,
+            }}})
+            .AddStage(vk::ShaderStageFlagBits::eVertex, graphicsShader, "vs_main")
+                .SetConstant(0, HEIGHTMAP_SIZE)
+                .SetConstant(1, METERS_PER_TEXEL)
+                .FinishStage()
+            .AddStage(vk::ShaderStageFlagBits::eFragment, graphicsShader, "fs_main")
+                .SetConstant(2, MATERIAL_TILING)
+                .SetConstant(3, AMBIENT_INTENSITY)
+                .SetConstant(4, true)
+                .FinishStage()
+            .SetSingleAttachment(GetRenderTextureFormat())
+            .EnableDepth(GetDepthFormat())
+            .EnableMultisample(GetMultisampleCount())
+            .Build();
     });
 
-    // auto graphicsNormalsShader = dvk::Shader::LoadFile(GetDevice(), TERRAIN_NORMALS_SHADER_PATH, "Terrain Graphics Normals");
-    // normalsPipeline = dvk::GraphicsPipeline::Create(GetDevice(), graphicsPipelineLayout)
-    //     .SetLabel("Terrain Graphics Normals")
-    //     .SetVertexInput({ vk::VertexInputBindingDescription {
-    //         .binding = 0,
-    //         .stride = sizeof(glm::vec2),
-    //         .inputRate = vk::VertexInputRate::eVertex,
-    //     }}, {{ vk::VertexInputAttributeDescription {
-    //         .location = 0,
-    //         .binding = 0,
-    //         .format = vk::Format::eR32G32Sfloat,
-    //         .offset = 0,
-    //     }}})
-    //     .SetTopology(vk::PrimitiveTopology::ePointList)
-    //     .AddStage(vk::ShaderStageFlagBits::eVertex, graphicsNormalsShader, "vs_main")
-    //         .SetConstant(0, HEIGHTMAP_SIZE)
-    //         .SetConstant(1, METERS_PER_TEXEL)
-    //         .FinishStage()
-    //     .AddStage(vk::ShaderStageFlagBits::eGeometry, graphicsNormalsShader, "gs_main").FinishStage()
-    //     .AddStage(vk::ShaderStageFlagBits::eFragment, graphicsNormalsShader, "fs_main").FinishStage()
-    //     .SetSingleAttachment(GetRenderTextureFormat())
-    //     .EnableDepth(GetDepthFormat())
-    //     .EnableMultisample(GetMultisampleCount())
-    //     .Build();
+    auto graphicsNormalsShader = dvk::Shader::LoadFile(GetDevice(), TERRAIN_NORMALS_SHADER_PATH, "Terrain Graphics Normals");
+    normalsPipeline = dvk::GraphicsPipeline::Create(GetDevice(), graphicsPipelineLayout)
+        .SetLabel("Terrain Graphics Normals")
+        .SetVertexInput({ vk::VertexInputBindingDescription {
+            .binding = 0,
+            .stride = sizeof(glm::vec2),
+            .inputRate = vk::VertexInputRate::eVertex,
+        }}, {{ vk::VertexInputAttributeDescription {
+            .location = 0,
+            .binding = 0,
+            .format = vk::Format::eR32G32Sfloat,
+            .offset = 0,
+        }}})
+        .SetTopology(vk::PrimitiveTopology::ePointList)
+        .AddStage(vk::ShaderStageFlagBits::eVertex, graphicsNormalsShader, "vs_main")
+            .SetConstant(0, HEIGHTMAP_SIZE)
+            .SetConstant(1, METERS_PER_TEXEL)
+            .FinishStage()
+        .AddStage(vk::ShaderStageFlagBits::eGeometry, graphicsNormalsShader, "gs_main").FinishStage()
+        .AddStage(vk::ShaderStageFlagBits::eFragment, graphicsNormalsShader, "fs_main").FinishStage()
+        .SetSingleAttachment(GetRenderTextureFormat())
+        .EnableDepth(GetDepthFormat())
+        .EnableMultisample(GetMultisampleCount())
+        .Build();
 }
 
-void Terrain::Draw(const vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex) const {
+void Terrain::Draw(GLFWwindow* window, const vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+    auto toggleWireframeKey = glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS;
+    if (toggleWireframeKey && !toggleWireframeKeyHeld) {
+        useWireframe = !useWireframe;
+    }
+    toggleWireframeKeyHeld = toggleWireframeKey;
+
+    auto toggleNormalsKey = glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS;
+    if (toggleNormalsKey && !toggleNormalsKeyHeld) {
+        useNormals = !useNormals;
+    }
+    toggleNormalsKeyHeld = toggleNormalsKey;
+
+    auto& pipeline = useWireframe ? graphicsWireframePipeline : graphicsPipeline;
+
     constexpr std::array lodRanges = {
         24.0f, 44.0f, 80.0f, 144.0f, 256.0f, 448.0f, 768.0f, 1280.0f, 2048.0f,
     };
@@ -244,18 +283,20 @@ void Terrain::Draw(const vk::raii::CommandBuffer& commandBuffer, uint32_t frameI
     // };
 
     for (uint32_t i = 0; i < 9; i++) {
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline->GetPipeline());
-        commandBuffer.pushConstants<LodConstants>(graphicsPipeline->GetLayout()->GetPipelineLayout(), vk::ShaderStageFlagBits::eVertex, 0, {{
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
+        commandBuffer.pushConstants<LodConstants>(pipeline->GetLayout()->GetPipelineLayout(), vk::ShaderStageFlagBits::eVertex, 0, {{
             .lod = i,
             .range = lodRanges[i],
         }});
         commandBuffer.bindVertexBuffers(0, *vertexBuffer[i]->GetBuffer(), { 0 });
         commandBuffer.bindIndexBuffer(indexBuffer[i]->GetBuffer(), 0, vk::IndexType::eUint32);
-        BindGlobals(commandBuffer, graphicsPipeline->GetLayout()->GetPipelineLayout(), frameIndex);
-        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, graphicsPipeline->GetLayout()->GetPipelineLayout(), 1, *graphicsBindSet->GetDescriptorSet(), nullptr);
+        BindGlobals(commandBuffer, pipeline->GetLayout()->GetPipelineLayout(), frameIndex);
+        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline->GetLayout()->GetPipelineLayout(), 1, *graphicsBindSet->GetDescriptorSet(), nullptr);
         commandBuffer.drawIndexed(indexCounts[i], 1, 0, 0, 0);
 
-        // commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, normalsPipeline->GetPipeline());
-        // commandBuffer.draw(indexCounts[i], 1, 0, 0);
+        if (useNormals) {
+            commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, normalsPipeline->GetPipeline());
+            commandBuffer.draw(indexCounts[i], 1, 0, 0);
+        }
     }
 }

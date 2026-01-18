@@ -120,7 +120,7 @@ void Game::MainLoop() {
     commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(presenter.GetExtent().width), static_cast<float>(presenter.GetExtent().height), 0.0f, 1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), presenter.GetExtent()));
 
-    terrain->Draw(commandBuffer, frameIndex);
+    terrain->Draw(window->getHandle(), commandBuffer, frameIndex);
     skybox->Draw(flyCamera.GetProjMat(), flyCamera.GetViewMat(), commandBuffer, frameIndex);
 
     commandBuffer.endRendering();

@@ -4,6 +4,8 @@
 
 #include <dvk/dvk.hpp>
 
+#include <GLFW/glfw3.h>
+
 struct LodConstants {
     uint32_t lod;
     float range;
@@ -13,7 +15,7 @@ class Terrain {
 public:
     Terrain();
 
-    void Draw(const vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex) const;
+    void Draw(GLFWwindow* window, const vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
 private:
     std::vector<dvk::Buffer::Ref> vertexBuffer;
@@ -37,6 +39,7 @@ private:
     Watcher graphicsPipelineWatcher;
     dvk::PipelineLayout::Ref graphicsPipelineLayout;
     dvk::GraphicsPipeline::Ref graphicsPipeline;
+    dvk::GraphicsPipeline::Ref graphicsWireframePipeline;
     dvk::BindSetLayout::Ref graphicsBindSetLayout;
     dvk::BindSet::Ref graphicsBindSet;
 
@@ -44,4 +47,10 @@ private:
 
     std::vector<uint32_t> vertexCounts;
     std::vector<uint32_t> indexCounts;
+
+    bool toggleWireframeKeyHeld = false;
+    bool useWireframe = false;
+
+    bool toggleNormalsKeyHeld = false;
+    bool useNormals = false;
 };
