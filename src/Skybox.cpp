@@ -6,6 +6,8 @@
 #include <string>
 #include <utility>
 
+#include "dvk/CommandBuffer.hpp"
+
 static constexpr int IRRADIANCE_MAP_SIZE = 64;
 static constexpr int RADIANCE_MAP_SIZE = 512;
 static constexpr int BRDF_LUT_SIZE = 512;
@@ -477,7 +479,7 @@ Skybox::Skybox(dvk::Texture::Ref cubeMap, dvk::Texture::Ref irradianceMap, dvk::
 
     auto shader = dvk::Shader::LoadFile(GetDevice(), SB_SKYBOX_SHADER_PATH, "Skybox");
 
-    shaderPipeline = dvk::GraphicsPipeline::Create(GetDevice(), pipelineLayout)
+    graphicsPipeline = dvk::GraphicsPipeline::Create(GetDevice(), pipelineLayout)
         .SetLabel("Skybox")
         .SetVertexInput(getCubeVertexBindingDescriptions(), getCubeVertexAttributeDescriptions())
         .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "vs_main").FinishStage()
@@ -520,17 +522,17 @@ Skybox Skybox::FromEquirectangularMap(const Data::Image& image) {
     return FromEquirectangularMap(texture);
 }
 
-void Skybox::Draw(glm::mat4 projMatrix, glm::mat4 viewMatrix, const vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+void Skybox::Draw(glm::mat4 projMatrix, glm::mat4 viewMatrix, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
     SkyboxUniforms uniforms {
         .projMatrix = projMatrix,
         .viewMatrix = viewMatrix,
     };
     uniformBuffer[frameIndex]->CopyToAndFlush(&uniforms);
 
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, shaderPipeline->GetPipeline());
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shaderPipeline->GetLayout()->GetPipelineLayout(), 0, *bindSet[frameIndex]->GetDescriptorSet(), nullptr);
-    commandBuffer.bindVertexBuffers(0, *positionBuffer->GetBuffer(), { 0 });
-    commandBuffer.draw(36, 1, 0, 0);
+    commandBuffer.SetGraphicsPipeline(graphicsPipeline);
+    commandBuffer.SetVertexBuffer(0, positionBuffer);
+    commandBuffer.SetBindSet(0, bindSet[frameIndex]);
+    commandBuffer.Draw(32);
 }
 
 dvk::Texture::Ref Skybox::GetIrradianceMap() const { return irradianceMap; }

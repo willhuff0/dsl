@@ -5,6 +5,8 @@
 
 #include <string>
 
+#include "dvk/CommandBuffer.hpp"
+
 constexpr int numBlurIterations = 5;
 constexpr float bloomThreshold = 1.0f;
 constexpr float acesExposure = 1.2f;
@@ -161,9 +163,19 @@ void PostProcessing::SetUniforms(PostProcessingUniforms* uniforms) {
 
 dvk::TextureView::Ref PostProcessing::GetPostProcessingInputTextureView() { return inputRenderTextureView; }
 
-void PostProcessing::PostProcessingRenderPass(const vk::raii::CommandBuffer& commandBuffer, const vk::raii::ImageView& surfaceImageView, vk::Extent2D surfaceExtent) {
-    inputRenderTextureView->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-    // renderTextureView1->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+void PostProcessing::PostProcessingRenderPass(dvk::CommandBuffer& commandBuffer, const vk::raii::ImageView& surfaceImageView, vk::Extent2D surfaceExtent) {
+    commandBuffer.InsertBarriers()
+        .AddImageBarrier()
+            .SetTexture(inputRenderTextureView->GetTexture())
+            .SetLayout(vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal)
+            .InferStagesAndAccess()
+            .FinishImageBarrier()
+        // .AddImageBarrier()
+        //     .SetTexture(renderTextureView1->GetTexture())
+        //     .SetLayout(vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal)
+        //     .InferStagesAndAccess()
+        //     .FinishImageBarrier()
+        .FinishBarriers();
 
     // {
     //     vk::RenderingAttachmentInfo attachmentInfo = {
@@ -225,24 +237,15 @@ void PostProcessing::PostProcessingRenderPass(const vk::raii::CommandBuffer& com
     // }
 
     {
-        vk::RenderingAttachmentInfo attachmentInfo = {
-            .imageView   = surfaceImageView,
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp      = vk::AttachmentLoadOp::eClear,
-            .storeOp     = vk::AttachmentStoreOp::eStore,
-            .clearValue  = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
-        };
-        commandBuffer.beginRendering({
-            .renderArea           = { .offset = { 0, 0 }, .extent = surfaceExtent },
-            .layerCount           = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &attachmentInfo,
-        });
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, colorCorrectionPipeline->GetPipeline());
-        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, doublePipelineLayout->GetPipelineLayout(), 0, *inputBindSet->GetDescriptorSet(), nullptr);
-        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, doublePipelineLayout->GetPipelineLayout(), 1, *bindSet1->GetDescriptorSet(), nullptr);
-        commandBuffer.draw(6, 1, 0, 0);
-        commandBuffer.endRendering();
+        commandBuffer.BeginRendering()
+            .SetRenderArea({0, 0}, surfaceExtent)
+            .SetColorAttachmentSimple(surfaceImageView)
+            .FinishBeginRendering();
+        commandBuffer.SetGraphicsPipeline(colorCorrectionPipeline);
+        commandBuffer.SetBindSet(0, inputBindSet);
+        commandBuffer.SetBindSet(1, bindSet1);
+        commandBuffer.Draw(6);
+        commandBuffer.EndRendering();
     }
 
     if (GetDebugTextureView() != nullptr) {

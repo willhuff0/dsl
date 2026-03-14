@@ -1,32 +1,46 @@
 #pragma once
 
-#include <slgl/runtime/graphics/Graphics.hpp>
+#include "utils/GrowingBuffer.hpp"
+
+#include <dvk/dvk.hpp>
+#include <glm/glm.hpp>
 
 #include <string>
-#include <cstdint>
 #include <unordered_map>
 
-using namespace SLGL::Graphics;
+struct PartType {
+    std::string displayName;
+    float health;
+    std::string shaderId;
 
-class PartType {
-    std::string name;
-    float maxHealth;
-
-    Buffer::Ref positionBuffer;
-    Buffer::Ref normalBuffer;
-    Buffer::Ref indexBuffer;
-    uint32_t indexCount;
+    uint32_t indirectBufferOffset;
+    GrowingBuffer instanceBuffer;
+    uint32_t instanceCount;
 };
 
-class PartInstanceArray {
+struct PartInstance {
+public:
 
+private:
+};
+
+class ShaderInstance {
+public:
+    ShaderInstance();
+
+    uint32_t AddDraw();
+
+private:
+    GrowingBuffer indirectBuffer;
+    uint32_t drawCount;
 };
 
 class Vehicle {
 public:
-    void Draw(RenderEncoder* renderEncoder);
+    Vehicle();
 
 private:
-    std::unordered_map<PartType*, PartInstanceArray> parts;
-    Buffer::Ref indirectBuffer;
+    std::unordered_map<std::string, ShaderInstance> shaderInstances;
+    std::unordered_map<std::string, PartType> partTypes;
+    std::unordered_map<glm::ivec3, PartInstance> partInstances;
 };

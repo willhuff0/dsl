@@ -1,0 +1,10 @@
+{
+  "parts": [
+    {
+      "id": "test-part",
+      "display-name": "Test Part",
+      "health": 100.0,
+      "shader": "opaque"
+    }
+  ]
+}

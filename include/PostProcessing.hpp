@@ -26,7 +26,7 @@ public:
 
     dvk::TextureView::Ref GetPostProcessingInputTextureView();
 
-    void PostProcessingRenderPass(const vk::raii::CommandBuffer& commandBuffer, const vk::raii::ImageView& surfaceImageView, vk::Extent2D surfaceExtent);
+    void PostProcessingRenderPass(dvk::CommandBuffer& commandBuffer, const vk::raii::ImageView& surfaceImageView, vk::Extent2D surfaceExtent);
 
 private:
     dvk::BindSetLayout::Ref bindSetLayout;

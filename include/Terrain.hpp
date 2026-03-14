@@ -15,7 +15,7 @@ class Terrain {
 public:
     Terrain();
 
-    void Draw(GLFWwindow* window, const vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex);
+    void Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
 private:
     std::vector<dvk::Buffer::Ref> vertexBuffer;

@@ -14,12 +14,14 @@ find_package(glfw3 3.4 REQUIRED)
 #)
 #FetchContent_MakeAvailable(dvk)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../dvk ${CMAKE_CURRENT_BINARY_DIR}/dvk)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(assimp REQUIRED)
 target_link_libraries(zombies
     PRIVATE
         glfw
         dvk
         assimp::assimp
+        nlohmann_json::nlohmann_json
 )
 
 target_sources(zombies
@@ -36,11 +38,13 @@ target_sources(zombies
         src/Skybox.cpp
 #        src/Node.cpp
         src/PostProcessing.cpp
-#        src/Vehicle.cpp
-#        src/MeshRenderer.cpp
+        src/Vehicle.cpp
+        src/MeshRenderer.cpp
         src/Terrain.cpp
         src/TempModelLoader.cpp
         src/HotReload.cpp
+        src/utils/InputStream.cpp
+        src/utils/GrowingBuffer.cpp
     PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
@@ -61,11 +65,14 @@ target_sources(zombies
         include/Skybox.hpp
         include/PostProcessing.hpp
 #        include/Node.hpp
-#        include/Vehicle.hpp
-#        include/MeshRenderer.hpp
+        include/Vehicle.hpp
+        include/MeshRenderer.hpp
         include/Terrain.hpp
         include/TempModelLoader.hpp
         include/HotReload.hpp
+        include/utils/InputStream.hpp
+        include/utils/Serialization.hpp
+        include/utils/GrowingBuffer.hpp
 )
 
 target_include_directories(zombies

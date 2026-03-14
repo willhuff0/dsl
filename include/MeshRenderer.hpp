@@ -1,34 +1,29 @@
 #pragma once
 
+#include "utils/GrowingBuffer.hpp"
+
 #include <dvk/dvk.hpp>
 
-#include <cstdint>
 #include <unordered_map>
 
-class ResizableBuffer {
-public:
-    ResizableBuffer(const std::string& label, uint8_t usage);
-
-    [[nodiscard]] Buffer::Ref GetBuffer() const;
-
-    uint64_t Push(void* src, uint64_t size);
-    void Pop(uint64_t size);
-
-private:
-    uint64_t capacity;
-    uint64_t size;
-
-    Buffer::Usage::Flags usage;
-
-    Buffer::Ref buffer;
+struct Material {
+    uint64_t albedoIndex;
+    uint64_t metallicIndex;
+    uint64_t roughnessIndex;
+    uint64_t aoIndex;
+    uint64_t normalIndex;
 };
 
-struct MeshInstanceArrayObject {
+struct Mesh {
     uint64_t positionBufferOffset;
     uint64_t normalBufferOffset;
+    uint64_t tangentBufferOffset;
+    uint64_t uvBufferOffset;
     uint64_t indexBufferOffset;
 
     uint32_t indexCount;
+
+    uint32_t materialId;
 
     std::unordered_map<uint32_t, uint32_t> instanceIndices;
     uint32_t nextInstanceId = 0;
@@ -42,25 +37,27 @@ class MeshRenderer {
 public:
     MeshRenderer();
 
-    uint32_t LoadMesh(const std::string& path);
+    uint32_t LoadShader(const std::string& path);
+    uint32_t LoadMesh(const std::string& path, uint32_t materialId);
 
-    void Draw(RenderEncoder* renderEncoder);
+    void UpdateBindings();
+
+    void Draw(dvk::CommandBuffer& commandBuffer);
 
 private:
-    ResizableBuffer positionBuffer;
-    ResizableBuffer normalBuffer;
-    ResizableBuffer indexBuffer;
+    GrowingBuffer positionBuffer;
+    GrowingBuffer normalBuffer;
+    GrowingBuffer tangentBuffer;
+    GrowingBuffer uvBuffer;
+    GrowingBuffer indexBuffer;
 
-    ResizableBuffer indirectArgumentBuffer;
+    GrowingBuffer indirectArgumentBuffer;
 
-    ResizableBuffer instanceBuffer;
+    GrowingBuffer instanceBuffer;
 
-    ShaderPipeline::Render::Ref shaderPipeline;
+    dvk::BindSet::Ref bindSet;
+    dvk::GraphicsPipeline::Ref graphicsPipeline;
 
-    BindSet::Layout::Ref bindSetLayout;
-    BindSet::Ref bindSet;
-
-    Texture::Ref albedoTexture;
-
-    std::vector<MeshInstanceArrayObject> meshes;
+    std::vector<Material> materials;
+    std::vector<Mesh> meshes;
 };

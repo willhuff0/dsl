@@ -90,40 +90,42 @@ void Game::MainLoop() {
 
     // Main Render Pass
     auto postProcessingInputRenderTextureView = postProcessing->GetPostProcessingInputTextureView();
-    multisampleTextureView->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-    postProcessingInputRenderTextureView->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-    depthTextureView->GetTexture()->PrepareForDepthAttachment(commandBuffer);
-    vk::RenderingAttachmentInfo attachmentInfo = {
-        .imageView   = multisampleTextureView->GetImageView(),
-        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .resolveMode = vk::ResolveModeFlagBits::eAverage,
-        .resolveImageView = postProcessingInputRenderTextureView->GetImageView(),
-        .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .loadOp      = vk::AttachmentLoadOp::eClear,
-        .storeOp     = vk::AttachmentStoreOp::eStore,
-        .clearValue  = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
-    };
-    vk::RenderingAttachmentInfo depthAttachmentInfo = {
-        .imageView   = depthTextureView->GetImageView(),
-        .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-        .loadOp      = vk::AttachmentLoadOp::eClear,
-        .storeOp     = vk::AttachmentStoreOp::eDontCare,
-        .clearValue  = vk::ClearDepthStencilValue(1.0f, 0.0f),
-    };
-    commandBuffer.beginRendering({
-        .renderArea           = { .offset = {0, 0}, .extent = presenter.GetExtent() },
-        .layerCount           = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments    = &attachmentInfo,
-        .pDepthAttachment     = &depthAttachmentInfo,
-    });
-    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(presenter.GetExtent().width), static_cast<float>(presenter.GetExtent().height), 0.0f, 1.0f));
-    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), presenter.GetExtent()));
+
+    commandBuffer.InsertBarriers()
+        .AddImageBarrier()
+            .SetTexture(multisampleTextureView->GetTexture())
+            .SetLayout(vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal)
+            .InferStagesAndAccess(true)
+            .FinishImageBarrier()
+        .AddImageBarrier()
+            .SetTexture(postProcessingInputRenderTextureView->GetTexture())
+            .SetLayout(vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal)
+            .InferStagesAndAccess(true)
+            .FinishImageBarrier()
+        .AddImageBarrier()
+            .SetTexture(depthTextureView->GetTexture())
+            .SetAspect(vk::ImageAspectFlagBits::eDepth)
+            .SetLayout(vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal)
+            .InferStagesAndAccess(true)
+            .FinishImageBarrier()
+        .FinishBarriers();
+
+    commandBuffer.BeginRendering()
+        .SetRenderArea({0, 0}, presenter.GetExtent())
+        .AddColorAttachment()
+            .SetView(multisampleTextureView)
+            .EnableMultisample(postProcessingInputRenderTextureView)
+            .FinishAttachment()
+        .SetDepthAttachmentSimple(depthTextureView)
+        .FinishBeginRendering();
+
+    commandBuffer.SetViewport({0.0f, 0.0f}, {static_cast<float>(presenter.GetExtent().width), static_cast<float>(presenter.GetExtent().height)});
+    commandBuffer.SetScissor({0, 0}, presenter.GetExtent());
 
     terrain->Draw(window->getHandle(), commandBuffer, frameIndex);
     skybox->Draw(flyCamera.GetProjMat(), flyCamera.GetViewMat(), commandBuffer, frameIndex);
 
-    commandBuffer.endRendering();
+    commandBuffer.EndRendering();
 
     // Post Processing Render Pass
     presenter.PrepareImageForRendering(commandBuffer, imageIndex);

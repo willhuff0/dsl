@@ -35,3 +35,5 @@
 #define PP_BLUR_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/Blur.spv"
 #define PP_BLIT_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/Blit.spv"
 #define PP_COLOR_CORRECTION_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/ColorCorrection.spv"
+
+#define VEHICLE_PART_MANIFEST_PATH RESOURCE_BASEPATH "/vehicle/manifest.json"

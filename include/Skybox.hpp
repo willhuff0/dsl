@@ -66,14 +66,14 @@ public:
     static Skybox FromEquirectangularMap(const dvk::Texture::Ref& equirectangularMap);
     static Skybox FromEquirectangularMap(const Data::Image& image);
 
-    void Draw(glm::mat4 projMatrix, glm::mat4 viewMatrix, const vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex);
+    void Draw(glm::mat4 projMatrix, glm::mat4 viewMatrix, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
     [[nodiscard]] dvk::Texture::Ref GetIrradianceMap() const;
     [[nodiscard]] dvk::Texture::Ref GetRadianceMap() const;
     [[nodiscard]] dvk::Texture::Ref GetBrdfLut() const;
 
 private:
-    dvk::GraphicsPipeline::Ref shaderPipeline;
+    dvk::GraphicsPipeline::Ref graphicsPipeline;
     dvk::BindSetLayout::Ref bindSetLayout;
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> uniformBuffer;
     dvk::BindSet::Refs<FRAMES_IN_FLIGHT> bindSet;

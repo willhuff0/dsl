@@ -7,6 +7,8 @@
 
 #include <string>
 
+#include "dvk/CommandBuffer.hpp"
+
 constexpr float METERS_PER_TEXEL = 1.0f;
 constexpr uint32_t HEIGHTMAP_SIZE = 4096;
 constexpr float MATERIAL_TILING = 0.125f;
@@ -260,7 +262,7 @@ Terrain::Terrain() {
         .Build();
 }
 
-void Terrain::Draw(GLFWwindow* window, const vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+void Terrain::Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
     auto toggleWireframeKey = glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS;
     if (toggleWireframeKey && !toggleWireframeKeyHeld) {
         useWireframe = !useWireframe;
@@ -283,20 +285,19 @@ void Terrain::Draw(GLFWwindow* window, const vk::raii::CommandBuffer& commandBuf
     // };
 
     for (uint32_t i = 0; i < 9; i++) {
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
-        commandBuffer.pushConstants<LodConstants>(pipeline->GetLayout()->GetPipelineLayout(), vk::ShaderStageFlagBits::eVertex, 0, {{
+        commandBuffer.SetGraphicsPipeline(pipeline);
+        commandBuffer.PushConstant(0, vk::ShaderStageFlagBits::eVertex, LodConstants {
             .lod = i,
             .range = lodRanges[i],
-        }});
-        commandBuffer.bindVertexBuffers(0, *vertexBuffer[i]->GetBuffer(), { 0 });
-        commandBuffer.bindIndexBuffer(indexBuffer[i]->GetBuffer(), 0, vk::IndexType::eUint32);
-        BindGlobals(commandBuffer, pipeline->GetLayout()->GetPipelineLayout(), frameIndex);
-        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline->GetLayout()->GetPipelineLayout(), 1, *graphicsBindSet->GetDescriptorSet(), nullptr);
-        commandBuffer.drawIndexed(indexCounts[i], 1, 0, 0, 0);
+        });
+        commandBuffer.SetVertexBuffer(0, vertexBuffer[i]);
+        commandBuffer.SetIndexBuffer(indexBuffer[i], vk::IndexType::eUint32);
+        commandBuffer.SetBindSet(1, graphicsBindSet);
+        commandBuffer.DrawIndexed(indexCounts[i]);
 
         if (useNormals) {
-            commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, normalsPipeline->GetPipeline());
-            commandBuffer.draw(indexCounts[i], 1, 0, 0);
+            commandBuffer.SetGraphicsPipeline(normalsPipeline);
+            commandBuffer.Draw(indexCounts[i]);
         }
     }
 }
