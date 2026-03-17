@@ -317,51 +317,44 @@ dvk::Texture::Ref CubeMapConverter::GenerateRadianceMap(const dvk::Texture::Ref&
     return radianceMap;
 }
 
-void CubeMapConverter::capture(const dvk::BindSet::Ref& perMapBindSet, const dvk::Texture::Ref& target, dvk::GraphicsPipeline::Ref shaderPipeline, int mipMap, bool transitionLayoutStart , bool transitionLayoutEnd) {
+void CubeMapConverter::capture(const dvk::BindSet::Ref& perMapBindSet, const dvk::Texture::Ref& target, dvk::GraphicsPipeline::Ref graphicsPipeline, int mipMap, bool transitionLayoutStart , bool transitionLayoutEnd) {
     vk::Extent2D targetExtent = { std::max(1u, target->GetExtent().width >> mipMap), std::max(1u, target->GetExtent().height >> mipMap) };
 
     std::array<dvk::TextureView::Ref, 6> cubeMapTextureViews;
     for (int i = 0; i < 6; i++) {
         cubeMapTextureViews[i] = dvk::TextureView::Create(GetDevice(), target)
-            .SetLabel("CubeMapConverter ConvertEquirectangularToCubeMap Result View (" + std::to_string(i) + ")")
+            .SetLabel("CubeMapConverter Capture Result View (" + std::to_string(i) + ")")
             .SetArrayLayer(i)
             .SetMipLevel(mipMap)
             .Build();
     }
 
-    GetCommandEncoder().ExecuteAndWait([&](const vk::raii::CommandBuffer& commandBuffer) {
+    GetCommandEncoder().ExecuteAndWait([&](dvk::CommandBuffer& commandBuffer) {
         if (transitionLayoutStart) {
-            target->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+            target->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
         }
 
         for (int i = 0; i < 6; i++) {
-            vk::RenderingAttachmentInfo attachmentInfo = {
-                .imageView   = cubeMapTextureViews[i]->GetImageView(),
-                .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                .loadOp      = vk::AttachmentLoadOp::eClear,
-                .storeOp     = vk::AttachmentStoreOp::eStore,
-                .clearValue  = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
-            };
-            commandBuffer.beginRendering({
-                .renderArea           = { .offset = {0, 0}, .extent = targetExtent },
-                .layerCount           = 1,
-                .colorAttachmentCount = 1,
-                .pColorAttachments    = &attachmentInfo,
-            });
-            commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(targetExtent.width), static_cast<float>(targetExtent.height), 0.0f, 1.0f));
-            commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), targetExtent));
-            commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, shaderPipeline->GetPipeline());
-            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shaderPipeline->GetLayout()->GetPipelineLayout(), 0, *faceBindSets.at(i)->GetDescriptorSet(), nullptr);
-            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shaderPipeline->GetLayout()->GetPipelineLayout(), 1, *perMapBindSet->GetDescriptorSet(), nullptr);
-            commandBuffer.bindVertexBuffers(0, *positionBuffer->GetBuffer(), { 0 });
-            commandBuffer.draw(36, 1, 0, 0);
-            commandBuffer.endRendering();
+            commandBuffer.BeginRendering()
+                .SetColorAttachmentSimple(cubeMapTextureViews[i])
+                .SetRenderArea({0, 0}, targetExtent)
+                .FinishBeginRendering();
+
+            commandBuffer.SetViewport({0.0, 0.0}, {static_cast<float>(targetExtent.width), static_cast<float>(targetExtent.height)});
+            commandBuffer.SetScissor({0, 0}, targetExtent);
+            commandBuffer.SetGraphicsPipeline(graphicsPipeline);
+            commandBuffer.SetBindSet(0, faceBindSets[i]);
+            commandBuffer.SetBindSet(1, perMapBindSet);
+            commandBuffer.SetVertexBuffer(0, positionBuffer);
+            commandBuffer.Draw(36);
+
+            commandBuffer.EndRendering();
         }
 
         if (transitionLayoutEnd) {
-            target->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+            target->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         }
-    });
+    }, "CubeMapConverter Capture");
 }
 
 EnvBrdfLutGenerator::EnvBrdfLutGenerator() {
@@ -371,7 +364,7 @@ EnvBrdfLutGenerator::EnvBrdfLutGenerator() {
 
     auto shader = dvk::Shader::LoadFile(GetDevice(), SB_ENV_BRDF_LUT_GENERATOR_SHADER_PATH, "Environment BRDF LUT Generator");
 
-    shaderPipeline = dvk::GraphicsPipeline::Create(GetDevice(), pipelineLayout)
+    graphicsPipeline = dvk::GraphicsPipeline::Create(GetDevice(), pipelineLayout)
         .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "vs_main").FinishStage()
         .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "fs_main").FinishStage()
         .SetSingleAttachment(vk::Format::eR16G16Sfloat)
@@ -388,30 +381,23 @@ dvk::Texture::Ref EnvBrdfLutGenerator::GenerateBrdfLut(const std::string& label)
 
     auto textureView = dvk::TextureView::Create(GetDevice(), texture).Build();
 
-    GetCommandEncoder().ExecuteAndWait([&](const vk::raii::CommandBuffer& commandBuffer) {
-        texture->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+    GetCommandEncoder().ExecuteAndWait([&](dvk::CommandBuffer& commandBuffer) {
+        texture->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
 
-        vk::RenderingAttachmentInfo attachmentInfo = {
-            .imageView   = textureView->GetImageView(),
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp      = vk::AttachmentLoadOp::eClear,
-            .storeOp     = vk::AttachmentStoreOp::eStore,
-            .clearValue  = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
-        };
-        commandBuffer.beginRendering({
-            .renderArea           = { .offset = {0, 0}, .extent = { BRDF_LUT_SIZE, BRDF_LUT_SIZE } },
-            .layerCount           = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments    = &attachmentInfo,
-        });
-        commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(BRDF_LUT_SIZE), static_cast<float>(BRDF_LUT_SIZE), 0.0f, 1.0f));
-        commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), { BRDF_LUT_SIZE, BRDF_LUT_SIZE }));
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, shaderPipeline->GetPipeline());
-        commandBuffer.draw(6, 1, 0, 0);
-        commandBuffer.endRendering();
+        commandBuffer.BeginRendering()
+            .SetColorAttachmentSimple(textureView)
+            .SetRenderArea({0, 0}, {BRDF_LUT_SIZE, BRDF_LUT_SIZE})
+            .FinishBeginRendering();
 
-        texture->TransitionLayout(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-    });
+        commandBuffer.SetViewport({0.0, 0.0}, {static_cast<float>(BRDF_LUT_SIZE), static_cast<float>(BRDF_LUT_SIZE)});
+        commandBuffer.SetScissor({0, 0}, {BRDF_LUT_SIZE, BRDF_LUT_SIZE});
+        commandBuffer.SetGraphicsPipeline(graphicsPipeline);
+        commandBuffer.Draw(6);
+
+        commandBuffer.EndRendering();
+
+        texture->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    }, "EnvBrdfLutGenerator " + label);
 
     return texture;
 }

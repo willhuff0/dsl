@@ -39,7 +39,7 @@ private:
     dvk::Buffer::Ref faceUniformBuffer;
     dvk::BindSet::Refs<6> faceBindSets;
 
-    void capture(const dvk::BindSet::Ref& perMapBindSet, const dvk::Texture::Ref& target, dvk::GraphicsPipeline::Ref shaderPipeline, int mipMap = 0, bool transitionLayoutStart = true, bool transitionLayoutEnd = true);
+    void capture(const dvk::BindSet::Ref& perMapBindSet, const dvk::Texture::Ref& target, dvk::GraphicsPipeline::Ref graphicsPipeline, int mipMap = 0, bool transitionLayoutStart = true, bool transitionLayoutEnd = true);
 };
 
 class EnvBrdfLutGenerator {
@@ -49,7 +49,7 @@ public:
     dvk::Texture::Ref GenerateBrdfLut(const std::string& label = "Environment BRDF LUT");
 
 private:
-    dvk::GraphicsPipeline::Ref shaderPipeline;
+    dvk::GraphicsPipeline::Ref graphicsPipeline;
 };
 
 struct SkyboxUniforms {

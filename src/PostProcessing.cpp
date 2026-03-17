@@ -166,7 +166,7 @@ dvk::TextureView::Ref PostProcessing::GetPostProcessingInputTextureView() { retu
 void PostProcessing::PostProcessingRenderPass(dvk::CommandBuffer& commandBuffer, const vk::raii::ImageView& surfaceImageView, vk::Extent2D surfaceExtent) {
     commandBuffer.InsertBarriers()
         .AddImageBarrier()
-            .SetTexture(inputRenderTextureView->GetTexture())
+            .SetImage(inputRenderTextureView->GetTexture())
             .SetLayout(vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal)
             .InferStagesAndAccess()
             .FinishImageBarrier()

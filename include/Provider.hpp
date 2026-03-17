@@ -21,7 +21,7 @@ void SetSkybox(const dvk::Texture::Ref& irradianceMap,
                const dvk::Texture::Ref& radianceMap,
                const dvk::Texture::Ref& brdfLuts);
 
-void BindGlobals(const vk::raii::CommandBuffer& commandBuffer, vk::PipelineLayout pipelineLayout, uint32_t frameIndex);
+void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
 dvk::BindSetLayout::Ref GetGlobalBindSetLayout();
 

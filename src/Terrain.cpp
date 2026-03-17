@@ -114,20 +114,20 @@ Terrain::Terrain() {
                 .FinishStage()
             .Build();
 
-        GetCommandEncoder().ExecuteAndWait([&] (const vk::raii::CommandBuffer& commandBuffer) {
-            heightMapView->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
+        GetCommandEncoder().ExecuteAndWait([&] (dvk::CommandBuffer& commandBuffer) {
+            heightMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
 
-            commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *generatorPositionsPipeline->GetPipeline());
-            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *generatorPositionsPipeline->GetLayout()->GetPipelineLayout(), 0, *generatorBindSet->GetDescriptorSet(), nullptr);
-            commandBuffer.dispatch(HEIGHTMAP_SIZE / 32, HEIGHTMAP_SIZE / 32, 1);
+            commandBuffer.SetComputePipeline(generatorPositionsPipeline);
+            commandBuffer.SetBindSet(0, generatorBindSet);
+            commandBuffer.Dispatch(HEIGHTMAP_SIZE / 32, HEIGHTMAP_SIZE / 32);
 
-            normalMapView->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
-            commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *generatorNormalsPipeline->GetPipeline());
-            commandBuffer.dispatch(HEIGHTMAP_SIZE / 32, HEIGHTMAP_SIZE / 32, 1);
+            normalMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
+            commandBuffer.SetComputePipeline(generatorNormalsPipeline);
+            commandBuffer.Dispatch(HEIGHTMAP_SIZE / 32, HEIGHTMAP_SIZE / 32);
 
-            heightMapView->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
-            normalMapView->GetTexture()->TransitionLayout(commandBuffer, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
-        });
+            heightMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+            normalMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+        }, "Terrain Generate");
     });
 
     graphicsBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
@@ -286,12 +286,13 @@ void Terrain::Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32
 
     for (uint32_t i = 0; i < 9; i++) {
         commandBuffer.SetGraphicsPipeline(pipeline);
-        commandBuffer.PushConstant(0, vk::ShaderStageFlagBits::eVertex, LodConstants {
+        commandBuffer.PushConstant<LodConstants>(0, vk::ShaderStageFlagBits::eVertex, LodConstants {
             .lod = i,
             .range = lodRanges[i],
         });
         commandBuffer.SetVertexBuffer(0, vertexBuffer[i]);
         commandBuffer.SetIndexBuffer(indexBuffer[i], vk::IndexType::eUint32);
+        BindGlobals(commandBuffer, frameIndex);
         commandBuffer.SetBindSet(1, graphicsBindSet);
         commandBuffer.DrawIndexed(indexCounts[i]);
 

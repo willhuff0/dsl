@@ -167,8 +167,8 @@ void SetSkybox(const dvk::Texture::Ref& irradianceMap,
     }
 }
 
-void BindGlobals(const vk::raii::CommandBuffer& commandBuffer, vk::PipelineLayout pipelineLayout, uint32_t frameIndex) {
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *globalBindSet[frameIndex]->GetDescriptorSet(), nullptr);
+void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+    commandBuffer.SetBindSet(0, globalBindSet[frameIndex]);
 }
 
 dvk::BindSetLayout::Ref GetGlobalBindSetLayout() { return globalBindSetLayout; }
