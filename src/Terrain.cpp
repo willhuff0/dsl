@@ -121,6 +121,15 @@ Terrain::Terrain() {
             commandBuffer.SetBindSet(0, generatorBindSet);
             commandBuffer.Dispatch(HEIGHTMAP_SIZE / 32, HEIGHTMAP_SIZE / 32);
 
+            commandBuffer.InsertBarriers()
+                .AddImageBarrier()
+                    .SetImage(heightMapView->GetTexture())
+                    .SetLayout(vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral)
+                    .SetStages(vk::PipelineStageFlagBits2::eComputeShader, vk::PipelineStageFlagBits2::eComputeShader)
+                    .SetAccess(vk::AccessFlagBits2::eShaderWrite, vk::AccessFlagBits2::eShaderRead)
+                    .FinishImageBarrier()
+                .FinishBarriers();
+
             normalMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
             commandBuffer.SetComputePipeline(generatorNormalsPipeline);
             commandBuffer.Dispatch(HEIGHTMAP_SIZE / 32, HEIGHTMAP_SIZE / 32);
@@ -298,7 +307,9 @@ void Terrain::Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32
 
         if (useNormals) {
             commandBuffer.SetGraphicsPipeline(normalsPipeline);
-            commandBuffer.Draw(indexCounts[i]);
+            commandBuffer.SetVertexBuffer(0, vertexBuffer[i]);
+            commandBuffer.SetIndexBuffer(indexBuffer[i], vk::IndexType::eUint32);
+            commandBuffer.DrawIndexed(indexCounts[i]);
         }
     }
 }

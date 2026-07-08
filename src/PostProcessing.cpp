@@ -243,7 +243,6 @@ void PostProcessing::PostProcessingRenderPass(dvk::CommandBuffer& commandBuffer,
             .FinishBeginRendering();
         commandBuffer.SetGraphicsPipeline(colorCorrectionPipeline);
         commandBuffer.SetBindSet(0, inputBindSet);
-        commandBuffer.SetBindSet(1, bindSet1);
         commandBuffer.Draw(6);
         commandBuffer.EndRendering();
     }
