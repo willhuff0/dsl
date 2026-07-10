@@ -88,6 +88,9 @@ void Game::MainLoop() {
     };
     SetGlobalUniforms(&globalUniforms, frameIndex);
 
+    // Stream terrain heightmap around the camera before entering the render pass.
+    terrain->Update(flyCamera.GetPos(), commandBuffer);
+
     // Main Render Pass
     auto postProcessingInputRenderTextureView = postProcessing->GetPostProcessingInputTextureView();
 

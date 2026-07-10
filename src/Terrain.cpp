@@ -99,40 +99,33 @@ Terrain::Terrain() {
     generatorPipelineLayout = dvk::PipelineLayout::Create(GetDevice())
         .SetLabel("Terrain Generator")
         .AddBindSetLayout(generatorBindSetLayout)
+        .AddPushConstantRange()
+            .SetStage(vk::ShaderStageFlagBits::eCompute)
+            .SetSize(sizeof(GenRegion))
+            .FinishPushConstantRange()
         .Build();
 
     generatorPipelineWatcher = HotReload::CreateAndWatch(TERRAIN_GENERATOR_SHADER_PATH, [this]() {
         auto generatorShader = dvk::Shader::LoadFile(GetDevice(), TERRAIN_GENERATOR_SHADER_PATH, "Terrain Generator");
         generatorPositionsPipeline = dvk::ComputePipeline::Create(GetDevice(), generatorPipelineLayout)
             .SetLabel("Terrain Positions Generator")
-            .SetStage(generatorShader, "GeneratePositions").FinishStage()
+            .SetStage(generatorShader, "GeneratePositions")
+                .SetConstant(24, HEIGHTMAP_SIZE)
+                .FinishStage()
             .Build();
         generatorNormalsPipeline = dvk::ComputePipeline::Create(GetDevice(), generatorPipelineLayout)
             .SetLabel("Terrain Normals Generator")
             .SetStage(generatorShader, "GenerateNormals")
                 .SetConstant(0, METERS_PER_TEXEL)
+                .SetConstant(24, HEIGHTMAP_SIZE)
                 .FinishStage()
             .Build();
 
         GetCommandEncoder().ExecuteAndWait([&] (dvk::CommandBuffer& commandBuffer) {
             heightMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
-
-            commandBuffer.SetComputePipeline(generatorPositionsPipeline);
-            commandBuffer.SetBindSet(0, generatorBindSet);
-            commandBuffer.Dispatch(HEIGHTMAP_SIZE / 32, HEIGHTMAP_SIZE / 32);
-
-            commandBuffer.InsertBarriers()
-                .AddImageBarrier()
-                    .SetImage(heightMapView->GetTexture())
-                    .SetLayout(vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral)
-                    .SetStages(vk::PipelineStageFlagBits2::eComputeShader, vk::PipelineStageFlagBits2::eComputeShader)
-                    .SetAccess(vk::AccessFlagBits2::eShaderWrite, vk::AccessFlagBits2::eShaderRead)
-                    .FinishImageBarrier()
-                .FinishBarriers();
-
             normalMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
-            commandBuffer.SetComputePipeline(generatorNormalsPipeline);
-            commandBuffer.Dispatch(HEIGHTMAP_SIZE / 32, HEIGHTMAP_SIZE / 32);
+
+            generateRegions(commandBuffer, { GenRegion { .worldOrigin = heightmapOrigin, .size = glm::ivec2(HEIGHTMAP_SIZE) } });
 
             heightMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
             normalMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
@@ -271,6 +264,76 @@ Terrain::Terrain() {
         .Build();
 }
 
+void Terrain::generateRegions(dvk::CommandBuffer& commandBuffer, const std::vector<GenRegion>& regions) {
+    commandBuffer.SetComputePipeline(generatorPositionsPipeline);
+    commandBuffer.SetBindSet(0, generatorBindSet);
+    for (const auto& region : regions) {
+        commandBuffer.PushConstant<GenRegion>(0, vk::ShaderStageFlagBits::eCompute, region);
+        commandBuffer.Dispatch((region.size.x + 31) / 32, (region.size.y + 31) / 32);
+    }
+
+    commandBuffer.InsertBarriers()
+        .AddImageBarrier()
+            .SetImage(heightMapView->GetTexture())
+            .SetLayout(vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral)
+            .SetStages(vk::PipelineStageFlagBits2::eComputeShader, vk::PipelineStageFlagBits2::eComputeShader)
+            .SetAccess(vk::AccessFlagBits2::eShaderWrite, vk::AccessFlagBits2::eShaderRead)
+            .FinishImageBarrier()
+        .FinishBarriers();
+
+    // Normals depend on neighbouring heights, so regenerate each region grown by a 1-texel border.
+    commandBuffer.SetComputePipeline(generatorNormalsPipeline);
+    commandBuffer.SetBindSet(0, generatorBindSet);
+    for (const auto& region : regions) {
+        GenRegion normalRegion {
+            .worldOrigin = region.worldOrigin - glm::ivec2(1),
+            .size = region.size + glm::ivec2(2),
+        };
+        commandBuffer.PushConstant<GenRegion>(0, vk::ShaderStageFlagBits::eCompute, normalRegion);
+        commandBuffer.Dispatch((normalRegion.size.x + 31) / 32, (normalRegion.size.y + 31) / 32);
+    }
+}
+
+void Terrain::Update(const glm::vec3& cameraPos, dvk::CommandBuffer& commandBuffer) {
+    constexpr int size = static_cast<int>(HEIGHTMAP_SIZE);
+
+    // World-texel window centered on the camera, matching the vertex shader's biased convention.
+    glm::ivec2 cameraTexel = glm::ivec2(glm::floor(
+        glm::vec2(cameraPos.x, cameraPos.z) / METERS_PER_TEXEL + static_cast<float>(HEIGHTMAP_SIZE) / 2.0f));
+    glm::ivec2 desiredOrigin = cameraTexel - glm::ivec2(size / 2);
+
+    glm::ivec2 delta = desiredOrigin - heightmapOrigin;
+    if (delta.x == 0 && delta.y == 0) return;
+
+    std::vector<GenRegion> regions;
+    if (delta.x >= size || delta.x <= -size || delta.y >= size || delta.y <= -size) {
+        // Moved further than a full window (e.g. teleport): regenerate everything.
+        regions.push_back(GenRegion { .worldOrigin = desiredOrigin, .size = glm::ivec2(size) });
+    } else {
+        // Vertical strip of columns newly entering the window along X.
+        if (delta.x > 0)
+            regions.push_back(GenRegion { .worldOrigin = { heightmapOrigin.x + size, desiredOrigin.y }, .size = { delta.x, size } });
+        else if (delta.x < 0)
+            regions.push_back(GenRegion { .worldOrigin = { desiredOrigin.x, desiredOrigin.y }, .size = { -delta.x, size } });
+
+        // Horizontal strip of rows newly entering the window along Y (corner overlap is harmless).
+        if (delta.y > 0)
+            regions.push_back(GenRegion { .worldOrigin = { desiredOrigin.x, heightmapOrigin.y + size }, .size = { size, delta.y } });
+        else if (delta.y < 0)
+            regions.push_back(GenRegion { .worldOrigin = { desiredOrigin.x, desiredOrigin.y }, .size = { size, -delta.y } });
+    }
+
+    heightMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+    normalMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+
+    generateRegions(commandBuffer, regions);
+
+    heightMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+    normalMapView->GetTexture()->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    heightmapOrigin = desiredOrigin;
+}
+
 void Terrain::Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
     auto toggleWireframeKey = glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS;
     if (toggleWireframeKey && !toggleWireframeKeyHeld) {
@@ -287,7 +350,7 @@ void Terrain::Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32
     auto& pipeline = useWireframe ? graphicsWireframePipeline : graphicsPipeline;
 
     constexpr std::array lodRanges = {
-        24.0f, 44.0f, 80.0f, 144.0f, 256.0f, 448.0f, 768.0f, 1280.0f, 2048.0f,
+        24.0f, 44.0f, 80.0f, 144.0f, 256.0f, 448.0f, 768.0f, 1280.0f, 2048.0f
     };
     // constexpr std::array lodRanges = {
     //     64.0f, 128.0f, 256.0f, 512.0f, 1024.0f, 2048.0f,

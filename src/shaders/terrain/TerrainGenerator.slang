@@ -1,10 +1,49 @@
-[[vk::constant_id(1)]] const float FREQUENCY = 0.0015;
+[[vk::constant_id(1)]] const float FREQUENCY = 0.001;
 [[vk::constant_id(2)]] const int SEED = 6767;
 [[vk::constant_id(3)]] const float AMP = 0.507936537;
-[[vk::constant_id(4)]] const int OCTAVES = 6;
+[[vk::constant_id(4)]] const int OCTAVES = 10;
 [[vk::constant_id(5)]] const float WEIGHTED_STRENGTH = 0.0;
 [[vk::constant_id(6)]] const float LACUNARITY = 2.0;
-[[vk::constant_id(7)]] const float GAIN = 0.5;
+[[vk::constant_id(7)]] const float GAIN = 0.4;
+[[vk::constant_id(8)]] const float HEIGHT_MULTIPLIER = 100.0;
+
+// Layer 4 - domain warping. Bends ridgelines/valleys into natural, non-grid shapes.
+[[vk::constant_id(9)]]  const float WARP_FREQUENCY = 0.5;   // frequency of the warp field, relative to the base point scale
+[[vk::constant_id(10)]] const float WARP_STRENGTH = 0.25;   // how far coordinates are displaced, in post-FREQUENCY units (0 disables warping)
+[[vk::constant_id(11)]] const int   WARP_SEED = 700;        // seed offset for the warp field
+
+// Layer 1 - low-frequency control fields that decide what kind of terrain forms where.
+[[vk::constant_id(12)]] const float CONTINENT_FREQUENCY = 0.15; // relative frequency of the continent field
+[[vk::constant_id(13)]] const int   CONTINENT_SEED = 100;       // seed offset for the continent field
+[[vk::constant_id(14)]] const float EROSION_FREQUENCY = 0.35;   // relative frequency of the erosion field
+[[vk::constant_id(15)]] const int   EROSION_SEED = 200;         // seed offset for the erosion field
+
+// Layer 3 - terrain archetype amplitudes and how erosion selects between them.
+[[vk::constant_id(16)]] const float PLAINS_AMP = 0.3;        // amplitude of the smooth (FBM) plains contribution
+[[vk::constant_id(17)]] const float MOUNTAIN_AMP = 1.0;      // amplitude of the jagged (ridged) mountain contribution
+[[vk::constant_id(18)]] const float EROSION_MASK_LOW = 0.1;  // erosion value at which terrain is fully plains
+[[vk::constant_id(19)]] const float EROSION_MASK_HIGH = -0.4;// erosion value at which terrain is fully mountains
+
+// Continent shaping curve - maps the continent field to a base elevation.
+[[vk::constant_id(20)]] const float CONTINENT_HEIGHT = 4.0;     // scale of the base continent elevation
+[[vk::constant_id(21)]] const float CONTINENT_OCEAN_LEVEL = -0.2; // continent value below which ocean basins form
+[[vk::constant_id(22)]] const float CONTINENT_OCEAN_DEPTH = 0.6;  // how far below zero ocean basins sink
+[[vk::constant_id(23)]] const float CONTINENT_POWER = 1.5;        // >1 keeps lowlands flat and steepens highlands
+
+// Toroidal streaming - the heightmap is a wrapping window that slides with the camera.
+[[vk::constant_id(24)]] const uint HEIGHTMAP_SIZE = 4096;
+
+// Region of world-texel space to (re)generate this dispatch.
+struct GenRegion {
+    int2 worldOrigin; // world-texel coordinate of the region's (0,0) thread
+    int2 size;        // region extent in texels
+};
+[vk::push_constant] ConstantBuffer<GenRegion> u_region;
+
+int2 wrapTexel(int2 p) {
+    int size = (int)HEIGHTMAP_SIZE;
+    return ((p % size) + size) % size;
+}
 
 // Positions
 [[vk::binding(0, 0)]] RWTexture2D<float> heightMap;
@@ -178,7 +217,8 @@ float getNoise(int seed, float2 point) {
     return value * 18.24196194486065;
 }
 
-float generateFractal(float2 point) {
+// Jagged, ridged multifractal - the original terrain shape. Good for mountains.
+float ridged(float2 point) {
     int seed = SEED;
     float sum = 0;
     float amp = AMP;
@@ -196,17 +236,71 @@ float generateFractal(float2 point) {
     return sum;
 }
 
+// Smooth fractal Brownian motion - rolling hills and plains.
+float fbm(float2 point) {
+    int seed = SEED;
+    float sum = 0;
+    float amp = AMP;
+
+    for (int i = 0; i < OCTAVES; i++) {
+        sum += getNoise(seed++, point) * amp;
+
+        point.x *= LACUNARITY;
+        point.y *= LACUNARITY;
+        amp *= GAIN;
+    }
+
+    return sum;
+}
+
+// Layer 4 - displace the sample point by a low-frequency noise field.
+float2 warpPoint(float2 point) {
+    float2 offset = float2(
+        getNoise(SEED + WARP_SEED,     point * WARP_FREQUENCY),
+        getNoise(SEED + WARP_SEED + 1, (point + 5.2) * WARP_FREQUENCY));
+    return point + offset * WARP_STRENGTH;
+}
+
+// Maps the continent control field to a base elevation with a flat coastal
+// shelf, an ocean basin below the coastline, and a steepening rise inland.
+float continentCurve(float continent) {
+    float t = continent - CONTINENT_OCEAN_LEVEL;
+    if (t < 0.0) {
+        return t * CONTINENT_OCEAN_DEPTH;
+    }
+    float landT = t / max(1.0 - CONTINENT_OCEAN_LEVEL, 1e-5);
+    return pow(saturate(landT), CONTINENT_POWER);
+}
+
 float getHeight(float2 point) {
     point = transformNoiseCoordinates(point);
-    return generateFractal(point) * 24.0;
+    point = warpPoint(point);
+
+    // Layer 1 - low-frequency control fields.
+    float continent = getNoise(SEED + CONTINENT_SEED, point * CONTINENT_FREQUENCY);
+    float erosion   = getNoise(SEED + EROSION_SEED,   point * EROSION_FREQUENCY);
+
+    // Layer 3 - blend terrain archetypes based on erosion.
+    float plains    = fbm(point) * PLAINS_AMP;
+    float mountains = ridged(point) * MOUNTAIN_AMP;
+    float mountainMask = smoothstep(EROSION_MASK_LOW, EROSION_MASK_HIGH, erosion);
+    float detail = lerp(plains, mountains, mountainMask);
+
+    // Base continent elevation establishes distinct regions (coast, lowland, highland).
+    float base = continentCurve(continent) * CONTINENT_HEIGHT;
+
+    return (base + detail) * HEIGHT_MULTIPLIER;
 }
 // -- NOISE
 
 [shader("compute")]
 [numthreads(32, 32, 1)]
 void GeneratePositions(uint3 threadId : SV_DispatchThreadID) {
-    float2 uv = (float2)threadId.xy;
-    heightMap[threadId.xy] = getHeight(uv);
+    int2 local = int2(threadId.xy);
+    if (any(local >= u_region.size)) return;
+
+    int2 worldTexel = u_region.worldOrigin + local;
+    heightMap[wrapTexel(worldTexel)] = getHeight((float2)worldTexel);
 }
 
 // Normals
@@ -217,17 +311,16 @@ void GeneratePositions(uint3 threadId : SV_DispatchThreadID) {
 [shader("compute")]
 [numthreads(32, 32, 1)]
 void GenerateNormals(uint3 threadId: SV_DispatchThreadID) {
-    uint width, height;
-    heightMap.GetDimensions(width, height);
+    int2 local = int2(threadId.xy);
+    if (any(local >= u_region.size)) return;
 
-    if (threadId.x >= width || threadId.y >= height) return;
+    int2 worldTexel = u_region.worldOrigin + local;
+    int2 pos = wrapTexel(worldTexel);
 
-    int2 pos = int2(threadId.xy);
-
-    float hL = heightMap[int2(max(pos.x - 1, 0), pos.y)];
-    float hR = heightMap[int2(min(pos.x + 1, (int)width - 1), pos.y)];
-    float hD = heightMap[int2(pos.x, max(pos.y - 1, 0))];
-    float hU = heightMap[int2(pos.x, min(pos.y + 1, (int)height - 1))];
+    float hL = heightMap[wrapTexel(worldTexel + int2(-1, 0))];
+    float hR = heightMap[wrapTexel(worldTexel + int2( 1, 0))];
+    float hD = heightMap[wrapTexel(worldTexel + int2( 0, -1))];
+    float hU = heightMap[wrapTexel(worldTexel + int2( 0, 1))];
 
     float3 normal;
     normal.x = hL - hR;

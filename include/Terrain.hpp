@@ -15,9 +15,18 @@ class Terrain {
 public:
     Terrain();
 
+    void Update(const glm::vec3& cameraPos, dvk::CommandBuffer& commandBuffer);
     void Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
 private:
+    struct GenRegion {
+        glm::ivec2 worldOrigin;
+        glm::ivec2 size;
+    };
+    void generateRegions(dvk::CommandBuffer& commandBuffer, const std::vector<GenRegion>& regions);
+
+    glm::ivec2 heightmapOrigin{0};
+
     std::vector<dvk::Buffer::Ref> vertexBuffer;
     std::vector<dvk::Buffer::Ref> indexBuffer;
     dvk::TextureView::Ref heightMapView;
