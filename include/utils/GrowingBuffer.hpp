@@ -6,10 +6,10 @@ class GrowingBuffer {
 public:
     explicit GrowingBuffer(std::string label, vk::BufferUsageFlags usage, vk::PipelineStageFlags2 stages, uint64_t capacity = 0);
 
-    void Push(uint64_t dsize);
+    bool Push(uint32_t frameIndex, const void* src, uint64_t dsize);
     void Pop(uint64_t dsize);
 
-    void Reserve(uint64_t size);
+    bool Reserve(uint64_t size);
 
     [[nodiscard]] const dvk::Buffer::Ref& GetBuffer() const;
     [[nodiscard]] dvk::Buffer::Ref& GetBuffer();
@@ -17,7 +17,7 @@ public:
     [[nodiscard]] uint64_t GetCapacity() const;
 
 private:
-    void recreate();
+    void recreate(uint32_t frameIndex);
 
     std::string label;
     vk::BufferUsageFlags usage;

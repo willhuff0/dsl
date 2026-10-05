@@ -25,7 +25,7 @@ float4 fs_main(VertexOutput input) : SV_Target {
             float3 tangentSample = float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
             float3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * normal;
 
-            float3 sampleVal = u_cubeMap.Sample(u_sampler, sampleVec * float3(-1, 1, 1)).rgb * cos(theta) * sin(theta);
+            float3 sampleVal = u_cubeMap.Sample(u_sampler, sampleVec).rgb * cos(theta) * sin(theta);
             irradiance += sampleVal;
 
             nrSamples += 1.0;

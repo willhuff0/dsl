@@ -1,8 +1,5 @@
-struct GlobalUniforms {
-    float4x4 viewProjMatrix;
-    float4 viewPosition;
-    uint radianceMipMapCount;
-};
+#include "../Globals.slang"
+
 [[vk::binding(0, 0)]] ConstantBuffer<GlobalUniforms> u_global;
 
 [[vk::binding(1, 0)]] SamplerState u_environmentSampler;

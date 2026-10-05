@@ -3,6 +3,7 @@
 
 struct RadianceUniforms {
     float roughness;
+    float resolution;
 };
 [[vk::binding(2, 1)]] ConstantBuffer<RadianceUniforms> u_radiance;
 
@@ -27,6 +28,18 @@ float RadicalInverseVdC(uint bits) {
 
 float2 Hammersley(uint i, uint N) {
     return float2(float(i)/float(N), RadicalInverseVdC(i));
+}
+
+float DistributionGGX(float NdotH, float roughness) {
+    float alpha = roughness * roughness;
+    float alpha2 = alpha * alpha;
+    float NdotH2 = NdotH * NdotH;
+
+    float num = alpha2;
+    float denom = (NdotH2 * (alpha2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+
+    return num / denom;
 }
 
 float3 ImportanceSampleGGX(float2 Xi, float3 N, float roughness) {
@@ -63,7 +76,21 @@ float4 fs_main(VertexOutput input) : SV_Target {
 
         float NdotL = max(dot(N, L), 0.0);
         if (NdotL > 0.0) {
-            prefilteredColor += u_cubeMap.SampleLevel(u_sampler, L * float3(-1, 1, 1), 0).rgb * NdotL;
+            // Sample a mip level based on the sample's solid angle relative to a
+            // texel's solid angle. This blurs low-probability samples and removes
+            // the firefly/bright-dot artifacts of always sampling mip 0.
+            float NdotH = max(dot(N, H), 0.0);
+            float HdotV = max(dot(H, V), 0.0);
+            float D = DistributionGGX(NdotH, u_radiance.roughness);
+            float pdf = D * NdotH / (4.0 * HdotV) + 0.0001;
+
+            float resolution = u_radiance.resolution;
+            float saTexel = 4.0 * PI / (6.0 * resolution * resolution);
+            float saSample = 1.0 / (float(SAMPLE_COUNT) * pdf + 0.0001);
+
+            float mipLevel = u_radiance.roughness == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel);
+
+            prefilteredColor += u_cubeMap.SampleLevel(u_sampler, L, mipLevel).rgb * NdotL;
             totalWeight += NdotL;
         }
     }

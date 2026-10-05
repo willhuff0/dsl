@@ -5,6 +5,8 @@
 #include <dvk/dvk.hpp>
 #include <glm/glm.hpp>
 
+class Renderer;
+
 constexpr uint32_t FRAMES_IN_FLIGHT = 2;
 
 struct alignas(16) GlobalUniforms {
@@ -21,7 +23,7 @@ void SetSkybox(const dvk::Texture::Ref& irradianceMap,
                const dvk::Texture::Ref& radianceMap,
                const dvk::Texture::Ref& brdfLuts);
 
-void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
+void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, uint32_t binding = 0);
 
 dvk::BindSetLayout::Ref GetGlobalBindSetLayout();
 
@@ -39,3 +41,5 @@ void SetDebugTextureView(dvk::TextureView::Ref debugTextureView);
 const dvk::TextureView::Ref& GetDebugTextureView();
 const dvk::BindSetLayout::Ref& GetDebugTextureBindSetLayout();
 const dvk::BindSet::Ref& GetDebugTextureBindSet();
+
+Renderer& GetRenderer();

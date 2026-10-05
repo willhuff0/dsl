@@ -1,8 +1,5 @@
-struct GlobalUniforms {
-    float4x4 viewProjMatrix;
-    float4 viewPosition;
-    uint radianceMipMapCount;
-};
+#include "../Globals.slang"
+
 [[vk::binding(0, 0)]] ConstantBuffer<GlobalUniforms> u_global;
 
 [[vk::binding(0, 1)]] Texture2D<float> u_heightMap;
@@ -46,7 +43,7 @@ VertexOutput vs_main(VertexInput input) {
     float height = u_heightMap.Load(int3(wrapped, 0));
 
     VertexOutput output;
-    output.position = mul(u_global.viewProjMatrix, float4(worldXZ.x, height, worldXZ.y, 1.0));
+    output.position = mul(u_global.viewProjMat, float4(worldXZ.x, height, worldXZ.y, 1.0));
     output.worldPosition = float4(worldXZ.x, height, worldXZ.y, 1.0);
     return output;
 }

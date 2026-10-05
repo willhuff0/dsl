@@ -14,15 +14,44 @@ struct CubeMapCaptureUniforms {
 
 struct ConvolutionUniforms {
     float roughness;
+    float resolution;
 };
 
+class CubeMapConverter;
+
+// Mirrors the Dart `CubeMap`: owns a cube-map texture plus its metadata and can
+// derive irradiance / radiance maps from itself using a shared CubeMapConverter.
+class CubeMap {
+public:
+    CubeMap() = default;
+    CubeMap(dvk::Texture::Ref texture, uint32_t faceSize, uint32_t mipLevelCount);
+
+    static CubeMap FromEquirectangular(CubeMapConverter& converter, const dvk::Texture::Ref& equirectangularMap, const std::string& label = "Environment CubeMap");
+
+    [[nodiscard]] CubeMap GenerateIrradianceMap(CubeMapConverter& converter, const std::string& label = "Irradiance CubeMap") const;
+    [[nodiscard]] CubeMap GenerateRadianceMap(CubeMapConverter& converter, const std::string& label = "Radiance CubeMap") const;
+
+    [[nodiscard]] const dvk::Texture::Ref& GetTexture() const { return texture; }
+    [[nodiscard]] uint32_t GetFaceSize() const { return faceSize; }
+    [[nodiscard]] uint32_t GetMipLevelCount() const { return mipLevelCount; }
+
+    [[nodiscard]] dvk::TextureView::Ref CreateCubeView(const std::string& label = "CubeMap Cube View") const;
+
+private:
+    dvk::Texture::Ref texture;
+    uint32_t faceSize = 0;
+    uint32_t mipLevelCount = 1;
+};
+
+// Shared machinery (pipelines, per-face capture uniforms, sampler) used to render
+// into cube-map faces. Equivalent to the Dart `CubeMap` static shader/framebuffer state.
 class CubeMapConverter {
 public:
     CubeMapConverter();
 
-    dvk::Texture::Ref ConvertEquirectangularToCubeMap(const dvk::Texture::Ref& equirectangularMap, const std::string& label = "CubeMapConverter ConvertEquirectangularToCubeMap Result");
-    dvk::Texture::Ref GenerateIrradianceMap(const dvk::Texture::Ref& cubeMap, const std::string& label = "CubeMapConverter Irradiance Map");
-    dvk::Texture::Ref GenerateRadianceMap(const dvk::Texture::Ref& cubeMap, const std::string& label = "CubeMapConverter Radiance Map");
+    CubeMap ConvertEquirectangularToCubeMap(const dvk::Texture::Ref& equirectangularMap, const std::string& label);
+    CubeMap GenerateIrradianceMap(const CubeMap& cubeMap, const std::string& label);
+    CubeMap GenerateRadianceMap(const CubeMap& cubeMap, const std::string& label);
 
 private:
     dvk::GraphicsPipeline::Ref equirectangularToCubeMapShaderPipeline;
@@ -40,6 +69,7 @@ private:
     dvk::BindSet::Refs<6> faceBindSets;
 
     void capture(const dvk::BindSet::Ref& perMapBindSet, const dvk::Texture::Ref& target, dvk::GraphicsPipeline::Ref graphicsPipeline, int mipMap = 0, bool transitionLayoutStart = true, bool transitionLayoutEnd = true);
+    void generateCubeMipmaps(const dvk::Texture::Ref& target, uint32_t faceSize, uint32_t mipLevelCount);
 };
 
 class EnvBrdfLutGenerator {
@@ -61,7 +91,7 @@ class Skybox {
 public:
     static int GetRadianceMipMapCount();
 
-    explicit Skybox(dvk::Texture::Ref cubeMap, dvk::Texture::Ref irradianceMap, dvk::Texture::Ref radianceMap, dvk::Texture::Ref brdfLut);
+    Skybox(CubeMap environmentMap, CubeMap irradianceMap, CubeMap radianceMap, dvk::Texture::Ref brdfLut);
 
     static Skybox FromEquirectangularMap(const dvk::Texture::Ref& equirectangularMap);
     static Skybox FromEquirectangularMap(const Data::Image& image);
@@ -73,14 +103,16 @@ public:
     [[nodiscard]] dvk::Texture::Ref GetBrdfLut() const;
 
 private:
+    CubeMap environmentMap;
+    CubeMap irradianceMap;
+    CubeMap radianceMap;
+    dvk::Texture::Ref brdfLut;
+
     dvk::GraphicsPipeline::Ref graphicsPipeline;
     dvk::BindSetLayout::Ref bindSetLayout;
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> uniformBuffer;
     dvk::BindSet::Refs<FRAMES_IN_FLIGHT> bindSet;
     dvk::Sampler::Ref sampler;
     dvk::TextureView::Ref cubeMapView;
-    dvk::Texture::Ref irradianceMap;
-    dvk::Texture::Ref radianceMap;
-    dvk::Texture::Ref brdfLut;
     dvk::Buffer::Ref positionBuffer;
 };

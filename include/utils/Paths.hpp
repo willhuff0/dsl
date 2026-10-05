@@ -36,4 +36,5 @@
 #define PP_BLIT_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/Blit.spv"
 #define PP_COLOR_CORRECTION_SHADER_PATH RESOURCE_BASEPATH "/shaders/pp/ColorCorrection.spv"
 
-#define VEHICLE_PART_MANIFEST_PATH RESOURCE_BASEPATH "/vehicle/manifest.json"
+#define RENDERER_COMPUTE_PASS1_SHADER_PATH RESOURCE_BASEPATH "/shaders/renderer/Pass1_CullInstances.spv"
+#define RENDERER_COMPUTE_PASS2_SHADER_PATH RESOURCE_BASEPATH "/shaders/renderer/Pass2_CompactCommands.spv"

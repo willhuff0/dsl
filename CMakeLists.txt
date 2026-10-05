@@ -38,12 +38,13 @@ target_sources(zombies
 #        src/Node.cpp
         src/PostProcessing.cpp
         src/Vehicle.cpp
-        src/MeshRenderer.cpp
         src/Terrain.cpp
         src/TempModelLoader.cpp
         src/HotReload.cpp
         src/utils/InputStream.cpp
         src/utils/GrowingBuffer.cpp
+        src/Gltf.cpp
+        src/Renderer.cpp
     PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
@@ -64,13 +65,14 @@ target_sources(zombies
         include/PostProcessing.hpp
 #        include/Node.hpp
         include/Vehicle.hpp
-        include/MeshRenderer.hpp
         include/Terrain.hpp
         include/TempModelLoader.hpp
         include/HotReload.hpp
         include/utils/InputStream.hpp
         include/utils/Serialization.hpp
         include/utils/GrowingBuffer.hpp
+        include/Gltf.hpp
+        include/Renderer.hpp
 )
 
 target_include_directories(zombies

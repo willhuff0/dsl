@@ -173,12 +173,12 @@ CubeMapConverter::CubeMapConverter() {
     glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
     captureProjection[1][1] *= -1;
     glm::mat4 captureViews[] = {
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f,  0.0f,  0.0f), glm::vec3(0.0f, 1.0f,  0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 1.0f,  0.0f,  0.0f), glm::vec3(0.0f, 1.0f,  0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  1.0f,  0.0f), glm::vec3(0.0f, 0.0f, -1.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f, -1.0f,  0.0f), glm::vec3(0.0f, 0.0f,  1.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f,  1.0f), glm::vec3(0.0f, 1.0f,  0.0f)),
-        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f, -1.0f), glm::vec3(0.0f, 1.0f,  0.0f))
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 1.0f,  0.0f,  0.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f,  0.0f,  0.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f, -1.0f,  0.0f), glm::vec3(0.0f,  0.0f, -1.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  1.0f,  0.0f), glm::vec3(0.0f,  0.0f,  1.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f,  1.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f, -1.0f), glm::vec3(0.0f, -1.0f,  0.0f))
     };
     CubeMapCaptureUniforms captureUniforms[] {
         { .viewProjMatrix = captureProjection * captureViews[0] },
@@ -212,7 +212,7 @@ CubeMapConverter::CubeMapConverter() {
     convolutionUniformBuffer = dvk::Buffer::Create(GetDevice())
         .SetLabel("CubeMapConverter Convolution Uniform Buffer")
         .SetUsage(vk::BufferUsageFlagBits::eUniformBuffer)
-        .SetSize(4)
+        .SetSize(sizeof(ConvolutionUniforms))
         .EnableCopyToAndFlush()
         .Build();
 
@@ -220,13 +220,19 @@ CubeMapConverter::CubeMapConverter() {
     convolutionPerMapBindSet = dvk::BindSet::Create(GetDevice(), GetBindPool(), convolutionPerMapBindSetLayout, "CubeMapConverter Irradiance/Radiance Per Map");
 }
 
-dvk::Texture::Ref CubeMapConverter::ConvertEquirectangularToCubeMap(const dvk::Texture::Ref& equirectangularMap, const std::string& label) {
+CubeMap CubeMapConverter::ConvertEquirectangularToCubeMap(const dvk::Texture::Ref& equirectangularMap, const std::string& label) {
     uint32_t cubeMapFaceSize = equirectangularMap->GetExtent().height;
+    // Mirrors the Dart `CubeMap.fromHdri`, which calls `generateMipmap` on the
+    // environment cube map. Those mips are required for the radiance prefilter to
+    // sample lower-resolution levels and avoid firefly/bright-dot artifacts.
+    uint32_t mipLevelCount = static_cast<uint32_t>(std::floor(std::log2(cubeMapFaceSize))) + 1;
+
     auto cubeMapTexture = dvk::Texture::Create(GetDevice())
         .SetLabel(label)
-        .SetUsage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment)
+        .SetUsage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst)
         .SetFormat(vk::Format::eR16G16B16A16Sfloat)
         .SetExtent({ cubeMapFaceSize, cubeMapFaceSize, 1 })
+        .SetMipLevelCount(mipLevelCount)
         .AllowCubeViews()
         .Build();
 
@@ -241,24 +247,24 @@ dvk::Texture::Ref CubeMapConverter::ConvertEquirectangularToCubeMap(const dvk::T
             .FinishSampler()
         .Update(equirectangularToCubeMapPerMapBindSet);
 
-    capture(equirectangularToCubeMapPerMapBindSet, cubeMapTexture, equirectangularToCubeMapShaderPipeline);
+    // Render into mip 0 only; leave the image in a color-attachment layout so the
+    // mipmap generator can take over the layout transitions.
+    capture(equirectangularToCubeMapPerMapBindSet, cubeMapTexture, equirectangularToCubeMapShaderPipeline, 0, true, false);
+    generateCubeMipmaps(cubeMapTexture, cubeMapFaceSize, mipLevelCount);
 
-    return cubeMapTexture;
+    return CubeMap(cubeMapTexture, cubeMapFaceSize, mipLevelCount);
 }
 
-dvk::Texture::Ref CubeMapConverter::GenerateIrradianceMap(const dvk::Texture::Ref& cubeMap, const std::string& label) {
+CubeMap CubeMapConverter::GenerateIrradianceMap(const CubeMap& cubeMap, const std::string& label) {
     auto irradianceMap = dvk::Texture::Create(GetDevice())
         .SetLabel(label)
         .SetUsage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment)
-        .SetFormat(cubeMap->GetFormat())
+        .SetFormat(cubeMap.GetTexture()->GetFormat())
         .SetExtent({ IRRADIANCE_MAP_SIZE, IRRADIANCE_MAP_SIZE, 1 })
         .AllowCubeViews()
         .Build();
 
-    auto cubeMapView = dvk::TextureView::Create(GetDevice(), cubeMap)
-        .SetType(vk::ImageViewType::eCube)
-        .SetArrayLayer(0, 6)
-        .Build();
+    auto cubeMapView = cubeMap.CreateCubeView("Irradiance Source CubeMap View");
 
     dvk::Binder()
         .BindTexture(0)
@@ -269,29 +275,26 @@ dvk::Texture::Ref CubeMapConverter::GenerateIrradianceMap(const dvk::Texture::Re
             .FinishSampler()
         .BindBuffer(2)
             .SetBuffer(convolutionUniformBuffer)
-            .SetRange(0, 4)
+            .SetRange(0, sizeof(ConvolutionUniforms))
             .FinishBuffer()
         .Update(convolutionPerMapBindSet);
 
     capture(convolutionPerMapBindSet, irradianceMap, irradianceShaderPipeline);
 
-    return irradianceMap;
+    return CubeMap(irradianceMap, IRRADIANCE_MAP_SIZE, 1);
 }
 
-dvk::Texture::Ref CubeMapConverter::GenerateRadianceMap(const dvk::Texture::Ref& cubeMap, const std::string& label) {
+CubeMap CubeMapConverter::GenerateRadianceMap(const CubeMap& cubeMap, const std::string& label) {
     auto radianceMap = dvk::Texture::Create(GetDevice())
         .SetLabel(label)
         .SetUsage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment)
-        .SetFormat(cubeMap->GetFormat())
+        .SetFormat(cubeMap.GetTexture()->GetFormat())
         .SetExtent({ RADIANCE_MAP_SIZE, RADIANCE_MAP_SIZE, 1 })
         .SetMipLevelCount(RADIANCE_MIPMAP_COUNT)
         .AllowCubeViews()
         .Build();
 
-    auto cubeMapView = dvk::TextureView::Create(GetDevice(), cubeMap)
-        .SetType(vk::ImageViewType::eCube)
-        .SetArrayLayer(0, 6)
-        .Build();
+    auto cubeMapView = cubeMap.CreateCubeView("Radiance Source CubeMap View");
 
     dvk::Binder()
         .BindTexture(0)
@@ -302,19 +305,96 @@ dvk::Texture::Ref CubeMapConverter::GenerateRadianceMap(const dvk::Texture::Ref&
             .FinishSampler()
         .BindBuffer(2)
             .SetBuffer(convolutionUniformBuffer)
-            .SetRange(0, 4)
+            .SetRange(0, sizeof(ConvolutionUniforms))
             .FinishBuffer()
         .Update(convolutionPerMapBindSet);
 
     for (int i = 0; i < RADIANCE_MIPMAP_COUNT; i++) {
         ConvolutionUniforms uniforms {
             .roughness = static_cast<float>(i) / static_cast<float>(RADIANCE_MIPMAP_COUNT - 1),
+            .resolution = static_cast<float>(cubeMap.GetFaceSize()),
         };
         convolutionUniformBuffer->CopyToAndFlush(&uniforms);
         capture(convolutionPerMapBindSet, radianceMap, radianceShaderPipeline, i, i == 0, i == RADIANCE_MIPMAP_COUNT - 1);
     }
 
-    return radianceMap;
+    return CubeMap(radianceMap, RADIANCE_MAP_SIZE, RADIANCE_MIPMAP_COUNT);
+}
+
+void CubeMapConverter::generateCubeMipmaps(const dvk::Texture::Ref& target, uint32_t faceSize, uint32_t mipLevelCount) {
+    if (mipLevelCount <= 1) {
+        GetCommandEncoder().ExecuteAndWait([&](dvk::CommandBuffer& commandBuffer) {
+            target->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        }, "CubeMapConverter Generate Mipmaps");
+        return;
+    }
+
+    GetCommandEncoder().ExecuteAndWait([&](dvk::CommandBuffer& commandBuffer) {
+        // mip 0 (all faces) was produced as a color attachment; make it a blit source.
+        commandBuffer.InsertBarriers()
+            .AddImageBarrier()
+                .SetImage(target)
+                .SetMipLevels(0, 1)
+                .SetArrayLayers(0, 6)
+                .SetLayout(vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferSrcOptimal)
+                .SetStages(vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eTransfer)
+                .SetAccess(vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlagBits2::eTransferRead)
+                .FinishImageBarrier()
+            .FinishBarriers();
+
+        // The remaining mips are undefined; make them blit destinations.
+        commandBuffer.InsertBarriers()
+            .AddImageBarrier()
+                .SetImage(target)
+                .SetMipLevels(1, mipLevelCount - 1)
+                .SetArrayLayers(0, 6)
+                .SetLayout(vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal)
+                .SetStages(vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eTransfer)
+                .SetAccess({}, vk::AccessFlagBits2::eTransferWrite)
+                .FinishImageBarrier()
+            .FinishBarriers();
+
+        for (uint32_t mip = 1; mip < mipLevelCount; mip++) {
+            int32_t srcSize = static_cast<int32_t>(std::max(1u, faceSize >> (mip - 1)));
+            int32_t dstSize = static_cast<int32_t>(std::max(1u, faceSize >> mip));
+
+            vk::ImageBlit blit {
+                .srcSubresource = { vk::ImageAspectFlagBits::eColor, mip - 1, 0, 6 },
+                .srcOffsets = std::array<vk::Offset3D, 2>{ vk::Offset3D{ 0, 0, 0 }, vk::Offset3D{ srcSize, srcSize, 1 } },
+                .dstSubresource = { vk::ImageAspectFlagBits::eColor, mip, 0, 6 },
+                .dstOffsets = std::array<vk::Offset3D, 2>{ vk::Offset3D{ 0, 0, 0 }, vk::Offset3D{ dstSize, dstSize, 1 } },
+            };
+
+            commandBuffer.GetCommandBuffer().blitImage(
+                target->GetImage(), vk::ImageLayout::eTransferSrcOptimal,
+                target->GetImage(), vk::ImageLayout::eTransferDstOptimal,
+                { blit }, vk::Filter::eLinear);
+
+            // This mip becomes the source for the next iteration.
+            commandBuffer.InsertBarriers()
+                .AddImageBarrier()
+                    .SetImage(target)
+                    .SetMipLevels(mip, 1)
+                    .SetArrayLayers(0, 6)
+                    .SetLayout(vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal)
+                    .SetStages(vk::PipelineStageFlagBits2::eTransfer, vk::PipelineStageFlagBits2::eTransfer)
+                    .SetAccess(vk::AccessFlagBits2::eTransferWrite, vk::AccessFlagBits2::eTransferRead)
+                    .FinishImageBarrier()
+                .FinishBarriers();
+        }
+
+        // Every mip is now a transfer source; move the whole chain to shader-read.
+        commandBuffer.InsertBarriers()
+            .AddImageBarrier()
+                .SetImage(target)
+                .SetMipLevels(0, mipLevelCount)
+                .SetArrayLayers(0, 6)
+                .SetLayout(vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal)
+                .SetStages(vk::PipelineStageFlagBits2::eTransfer, vk::PipelineStageFlagBits2::eFragmentShader)
+                .SetAccess(vk::AccessFlagBits2::eTransferRead, vk::AccessFlagBits2::eShaderSampledRead)
+                .FinishImageBarrier()
+            .FinishBarriers();
+    }, "CubeMapConverter Generate Mipmaps");
 }
 
 void CubeMapConverter::capture(const dvk::BindSet::Ref& perMapBindSet, const dvk::Texture::Ref& target, dvk::GraphicsPipeline::Ref graphicsPipeline, int mipMap, bool transitionLayoutStart , bool transitionLayoutEnd) {
@@ -355,6 +435,30 @@ void CubeMapConverter::capture(const dvk::BindSet::Ref& perMapBindSet, const dvk
             target->SimpleLayoutBarrier(commandBuffer, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         }
     }, "CubeMapConverter Capture");
+}
+
+CubeMap::CubeMap(dvk::Texture::Ref texture, uint32_t faceSize, uint32_t mipLevelCount)
+    : texture(std::move(texture)), faceSize(faceSize), mipLevelCount(mipLevelCount) { }
+
+CubeMap CubeMap::FromEquirectangular(CubeMapConverter& converter, const dvk::Texture::Ref& equirectangularMap, const std::string& label) {
+    return converter.ConvertEquirectangularToCubeMap(equirectangularMap, label);
+}
+
+CubeMap CubeMap::GenerateIrradianceMap(CubeMapConverter& converter, const std::string& label) const {
+    return converter.GenerateIrradianceMap(*this, label);
+}
+
+CubeMap CubeMap::GenerateRadianceMap(CubeMapConverter& converter, const std::string& label) const {
+    return converter.GenerateRadianceMap(*this, label);
+}
+
+dvk::TextureView::Ref CubeMap::CreateCubeView(const std::string& label) const {
+    return dvk::TextureView::Create(GetDevice(), texture)
+        .SetLabel(label)
+        .SetType(vk::ImageViewType::eCube)
+        .SetArrayLayer(0, 6)
+        .SetMipLevel(0, mipLevelCount)
+        .Build();
 }
 
 EnvBrdfLutGenerator::EnvBrdfLutGenerator() {
@@ -402,14 +506,12 @@ dvk::Texture::Ref EnvBrdfLutGenerator::GenerateBrdfLut(const std::string& label)
     return texture;
 }
 
-Skybox::Skybox(dvk::Texture::Ref cubeMap, dvk::Texture::Ref irradianceMap, dvk::Texture::Ref radianceMap, dvk::Texture::Ref brdfLut)
-    : irradianceMap(std::move(irradianceMap)),
+Skybox::Skybox(CubeMap environmentMap, CubeMap irradianceMap, CubeMap radianceMap, dvk::Texture::Ref brdfLut)
+    : environmentMap(std::move(environmentMap)),
+      irradianceMap(std::move(irradianceMap)),
       radianceMap(std::move(radianceMap)),
       brdfLut(std::move(brdfLut)) {
-    cubeMapView = dvk::TextureView::Create(GetDevice(), cubeMap)
-        .SetType(vk::ImageViewType::eCube)
-        .SetArrayLayer(0, 6)
-        .Build();
+    cubeMapView = this->environmentMap.CreateCubeView("Skybox Environment CubeMap View");
 
     bindSetLayout = dvk::BindSetLayout::Create(GetDevice())
         .SetLabel("Skybox")
@@ -472,6 +574,14 @@ Skybox::Skybox(dvk::Texture::Ref cubeMap, dvk::Texture::Ref irradianceMap, dvk::
         .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "fs_main").FinishStage()
         .SetSingleAttachment(GetRenderTextureFormat())
         .EnableDepth(GetDepthFormat())
+        .SetDepth()
+            // Matches the Dart reference (`depthFunc(LEQUAL)` + `depthMask(false)`):
+            // the skybox sits on the far plane, so it must pass against a cleared
+            // depth of 1.0 and must not overwrite scene depth.
+            .EnableDepthTest(true)
+            .EnableDepthWrite(false)
+            .SetDepthCompare(vk::CompareOp::eLessOrEqual)
+            .FinishDepth()
         .EnableMultisample(GetMultisampleCount())
         .Build();
 
@@ -485,15 +595,16 @@ Skybox::Skybox(dvk::Texture::Ref cubeMap, dvk::Texture::Ref irradianceMap, dvk::
 }
 
 Skybox Skybox::FromEquirectangularMap(const dvk::Texture::Ref& equirectangularMap) {
+    // Mirrors the Dart `Skybox.fromHdri` flow.
     CubeMapConverter converter;
-    auto cubeMap = converter.ConvertEquirectangularToCubeMap(equirectangularMap);
-    auto irradianceMap = converter.GenerateIrradianceMap(cubeMap);
-    auto radianceMap = converter.GenerateRadianceMap(cubeMap);
+    CubeMap environmentMap = CubeMap::FromEquirectangular(converter, equirectangularMap);
+    CubeMap irradianceMap = environmentMap.GenerateIrradianceMap(converter);
+    CubeMap radianceMap = environmentMap.GenerateRadianceMap(converter);
 
     EnvBrdfLutGenerator brdfLutGenerator;
     auto brdfLut = brdfLutGenerator.GenerateBrdfLut();
 
-    return Skybox(cubeMap, irradianceMap, radianceMap, brdfLut);
+    return Skybox(std::move(environmentMap), std::move(irradianceMap), std::move(radianceMap), brdfLut);
 }
 
 Skybox Skybox::FromEquirectangularMap(const Data::Image& image) {
@@ -518,11 +629,11 @@ void Skybox::Draw(glm::mat4 projMatrix, glm::mat4 viewMatrix, dvk::CommandBuffer
     commandBuffer.SetGraphicsPipeline(graphicsPipeline);
     commandBuffer.SetVertexBuffer(0, positionBuffer);
     commandBuffer.SetBindSet(0, bindSet[frameIndex]);
-    commandBuffer.Draw(32);
+    commandBuffer.Draw(36);
 }
 
-dvk::Texture::Ref Skybox::GetIrradianceMap() const { return irradianceMap; }
-dvk::Texture::Ref Skybox::GetRadianceMap() const { return radianceMap; }
+dvk::Texture::Ref Skybox::GetIrradianceMap() const { return irradianceMap.GetTexture(); }
+dvk::Texture::Ref Skybox::GetRadianceMap() const { return radianceMap.GetTexture(); }
 dvk::Texture::Ref Skybox::GetBrdfLut() const { return brdfLut; }
 
 int Skybox::GetRadianceMipMapCount() {

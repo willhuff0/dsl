@@ -32,6 +32,6 @@ VertexOutput vs_main(VertexInput input) {
 
 [shader("fragment")]
 float4 fs_main(VertexOutput input) : SV_Target {
-    float3 color = u_cubeMap.SampleLevel(u_sampler, input.localPosition, 7).rgb;
+    float3 color = u_cubeMap.Sample(u_sampler, input.localPosition).rgb;
     return float4(color, 1.0);
 }

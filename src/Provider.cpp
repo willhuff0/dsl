@@ -1,6 +1,9 @@
 #include "Provider.hpp"
 
+#include "Renderer.hpp"
+
 #include <utility>
+#include <optional>
 
 static Platform* platformBackend;
 static dvk::Device* graphicsBackend;
@@ -25,6 +28,8 @@ static dvk::BindSetLayout::Ref debugTextureBindSetLayout;
 static dvk::BindSet::Ref debugTextureBindSet;
 static dvk::TextureView::Ref debugTextureView;
 
+static std::optional<Renderer> renderer;
+
 static vk::SampleCountFlagBits getMaxUsableSampleCount() {
     vk::PhysicalDeviceProperties physicalDeviceProperties = GetDevice().GetPhysicalDevice().getProperties();
 
@@ -48,6 +53,7 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
     bindPool = dvk::BindPool::Create(GetDevice())
         .SetLabel("Global")
         .SetMaxSets(32)
+        .AddEntry(vk::DescriptorType::eStorageBuffer, 128)
         .AddEntry(vk::DescriptorType::eUniformBuffer, 128)
         .AddEntry(vk::DescriptorType::eSampledImage, 64)
         .AddEntry(vk::DescriptorType::eSampler, 32)
@@ -104,6 +110,8 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
             .FinishEntry()
         .Build();
     debugTextureBindSet = dvk::BindSet::Create(GetDevice(), GetBindPool(), debugTextureBindSetLayout, "Debug Texture Blit");
+
+    renderer.emplace();
 }
 
 void FreeProvider() {
@@ -167,8 +175,8 @@ void SetSkybox(const dvk::Texture::Ref& irradianceMap,
     }
 }
 
-void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
-    commandBuffer.SetBindSet(0, globalBindSet[frameIndex]);
+void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, uint32_t binding) {
+    commandBuffer.SetBindSet(binding, globalBindSet[frameIndex]);
 }
 
 dvk::BindSetLayout::Ref GetGlobalBindSetLayout() { return globalBindSetLayout; }
@@ -195,3 +203,7 @@ void SetDebugTextureView(dvk::TextureView::Ref debugTextureView_) {
 const dvk::TextureView::Ref& GetDebugTextureView() { return debugTextureView; }
 const dvk::BindSetLayout::Ref& GetDebugTextureBindSetLayout() { return debugTextureBindSetLayout; }
 const dvk::BindSet::Ref& GetDebugTextureBindSet() { return debugTextureBindSet; }
+
+Renderer& GetRenderer() {
+    return renderer.value();
+}

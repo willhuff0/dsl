@@ -8,14 +8,14 @@ constexpr uint64_t GROW_FACTOR = 2;
 GrowingBuffer::GrowingBuffer(std::string label, vk::BufferUsageFlags usage, vk::PipelineStageFlags2 stages, uint64_t capacity)
     : label(std::move(label)), usage(usage), stages(stages), capacity(capacity) {
     if (capacity != 0) {
-        recreate();
+        recreate(0);
     }
 }
 
-void GrowingBuffer::recreate() {
+void GrowingBuffer::recreate(uint32_t frameIndex) {
     auto newBuffer = dvk::Buffer::Create(GetDevice())
         .SetLabel(label)
-        .SetUsage(usage)
+        .SetUsage(usage | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst)
         .SetSize(capacity)
         .EnableCopyToAndFlush()
         .Build();
@@ -54,10 +54,17 @@ void GrowingBuffer::recreate() {
         });
     });
 
+    if (buffer != nullptr) {
+        GetCommandEncoder().DropRefOnceNotInUse(frameIndex, buffer);
+    }
+
     buffer = newBuffer;
 }
 
-void GrowingBuffer::Push(uint64_t dsize) {
+bool GrowingBuffer::Push(uint32_t frameIndex, const void* src, uint64_t dsize) {
+    if (dsize == 0) return false;
+
+    bool didResize = false;
     if (size + dsize > capacity) {
         if (capacity == 0) {
             capacity = 1;
@@ -69,20 +76,25 @@ void GrowingBuffer::Push(uint64_t dsize) {
                 capacity *= GROW_FACTOR;
             } while (size + dsize > capacity);
         }
-        recreate();
+        recreate(frameIndex);
+        didResize = true;
     }
+    buffer->CopyToAndFlush(src, size, dsize);
     size += dsize;
+    return didResize;
 }
 
 void GrowingBuffer::Pop(uint64_t dsize) {
     size -= dsize;
 }
 
-void GrowingBuffer::Reserve(uint64_t size) {
+bool GrowingBuffer::Reserve(uint64_t size) {
     if (size > capacity) {
         capacity = size;
         recreate();
+        return true;
     }
+    return false;
 }
 
 const dvk::Buffer::Ref& GrowingBuffer::GetBuffer() const {

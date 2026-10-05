@@ -1,0 +1,35 @@
+#include "RendererStructs.slang"
+
+[[vk::binding(0, 0)]] StructuredBuffer<MeshMetadata> MeshMetadatas;
+
+[[vk::binding(0, 1)]] StructuredBuffer<uint32_t> MeshInstanceIndexOffsets;
+[[vk::binding(1, 1)]] StructuredBuffer<uint32_t> MeshInstanceCounts;
+[[vk::binding(3, 1)]] StructuredBuffer<uint32_t> ShaderCommandIndexOffsets;
+[[vk::binding(4, 1)]] RWStructuredBuffer<Atomic<uint32_t>> DrawCounts;
+[[vk::binding(5, 1)]] RWStructuredBuffer<IndirectCommand> CompactedCommands;
+
+[[vk::push_constant]] uint32_t NumMeshes;
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void CompactCommands(uint32_t3 threadId: SV_DispatchThreadID) {
+    uint32_t meshIndex = threadId.x;
+    if (meshIndex >= NumMeshes) return;
+
+    uint32_t meshInstanceCount = MeshInstanceCounts[meshIndex];
+    if (meshInstanceCount == 0) return;
+
+    MeshMetadata meshMetadata = MeshMetadatas[meshIndex];
+    uint32_t meshInstanceIndexOffset = MeshInstanceIndexOffsets[meshIndex];
+
+    uint32_t perShaderLocalDrawIndex = DrawCounts[meshMetadata.shaderIndex]++;
+
+    uint32_t commandIndexOffset = ShaderCommandIndexOffsets[meshMetadata.shaderIndex];
+    IndirectCommand command = CompactedCommands[commandIndexOffset + perShaderLocalDrawIndex];
+
+    command.indexCount = meshMetadata.indexCount;
+    command.instanceCount = meshInstanceCount;
+    command.firstIndex = meshMetadata.firstIndex;
+    command.vertexOffset = meshMetadata.vertexOffset;
+    command.firstInstance = meshInstanceIndexOffset;
+}
