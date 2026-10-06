@@ -148,6 +148,10 @@ Renderer::Renderer()
 
     auto computePipelineLayout = dvk::PipelineLayout::Create(GetDevice())
         .SetLabel("[Mesh Renderer] Compute")
+        .AddPushConstantRange()
+            .SetStage(vk::ShaderStageFlagBits::eCompute)
+            .SetSize(sizeof(uint32_t))
+            .FinishPushConstantRange()
         .AddBindSetLayout(_staticBindSetLayout)
         .AddBindSetLayout(_perFrameBindSetLayout)
         .AddBindSetLayout(GetGlobalBindSetLayout())
@@ -358,7 +362,7 @@ void Renderer::Draw(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
             _compactedCommands[frameIndex],
             _drawCounts[frameIndex],
             _shaderToMaxMeshCount[i],
-            _shaderToCommandIndexOffsets[i] * sizeof(VkDrawIndexedIndirectCommand),
+            _shaderToCommandIndexOffsetsStaging[i] * sizeof(VkDrawIndexedIndirectCommand),
             i * sizeof(uint32_t));
     }
 }
@@ -540,7 +544,7 @@ bool Renderer::_maybeResizeCompactedCommands(uint32_t frameIndex, dvk::Binder& b
 void Renderer::_computeMeshToInstanceIndexOffsets(uint32_t frameIndex) {
     uint32_t offset = 0;
     for (size_t i = 0; i < _meshIndexToMaxInstanceCount.size(); i++) {
-        _shaderToCommandIndexOffsetsStaging[i] = offset;
+        _meshToInstanceIndexOffsetsStaging[i] = offset;
         offset += _meshIndexToMaxInstanceCount[i];
     }
 

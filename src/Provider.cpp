@@ -115,6 +115,8 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
 }
 
 void FreeProvider() {
+    renderer = std::nullopt;
+
     globalBindSetLayout = nullptr;
     environmentSampler = nullptr;
     debugTextureBindSetLayout = nullptr;

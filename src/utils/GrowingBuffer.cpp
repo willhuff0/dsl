@@ -20,41 +20,41 @@ void GrowingBuffer::recreate(uint32_t frameIndex) {
         .EnableCopyToAndFlush()
         .Build();
 
-    GetCommandEncoder().Execute([&](dvk::CommandBuffer& commandBuffer) {
-        vk::BufferMemoryBarrier2 srcBarrier {
-            .srcStageMask = stages,
-            .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
-            .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
-            .buffer = buffer->GetBuffer(),
-            .offset = 0,
-            .size = vk::WholeSize,
-        };
-        commandBuffer.GetCommandBuffer().pipelineBarrier2({
-            .bufferMemoryBarrierCount = 1,
-            .pBufferMemoryBarriers = &srcBarrier,
-        });
-        commandBuffer.GetCommandBuffer().copyBuffer(buffer->GetBuffer(), newBuffer->GetBuffer(), { vk::BufferCopy {
-            .srcOffset = 0,
-            .dstOffset = 0,
-            .size = size,
-        }});
-        vk::BufferMemoryBarrier2 dstBarrier {
-            .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
-            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-            .dstStageMask = stages,
-            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-            .buffer = buffer->GetBuffer(),
-            .offset = 0,
-            .size = vk::WholeSize,
-        };
-        commandBuffer.GetCommandBuffer().pipelineBarrier2({
-            .bufferMemoryBarrierCount = 1,
-            .pBufferMemoryBarriers = &dstBarrier,
-        });
-    });
-
     if (buffer != nullptr) {
+        GetCommandEncoder().Execute([&](dvk::CommandBuffer& commandBuffer) {
+            vk::BufferMemoryBarrier2 srcBarrier {
+                .srcStageMask = stages,
+                .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                .buffer = buffer->GetBuffer(),
+                .offset = 0,
+                .size = vk::WholeSize,
+            };
+            commandBuffer.GetCommandBuffer().pipelineBarrier2({
+                .bufferMemoryBarrierCount = 1,
+                .pBufferMemoryBarriers = &srcBarrier,
+            });
+            commandBuffer.GetCommandBuffer().copyBuffer(buffer->GetBuffer(), newBuffer->GetBuffer(), { vk::BufferCopy {
+                .srcOffset = 0,
+                .dstOffset = 0,
+                .size = size,
+            }});
+            vk::BufferMemoryBarrier2 dstBarrier {
+                .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .dstStageMask = stages,
+                .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
+                .buffer = buffer->GetBuffer(),
+                .offset = 0,
+                .size = vk::WholeSize,
+            };
+            commandBuffer.GetCommandBuffer().pipelineBarrier2({
+                .bufferMemoryBarrierCount = 1,
+                .pBufferMemoryBarriers = &dstBarrier,
+            });
+        });
+
         GetCommandEncoder().DropRefOnceNotInUse(frameIndex, buffer);
     }
 
@@ -88,10 +88,10 @@ void GrowingBuffer::Pop(uint64_t dsize) {
     size -= dsize;
 }
 
-bool GrowingBuffer::Reserve(uint64_t size) {
+bool GrowingBuffer::Reserve(uint32_t frameIndex, uint64_t size) {
     if (size > capacity) {
         capacity = size;
-        recreate();
+        recreate(frameIndex);
         return true;
     }
     return false;

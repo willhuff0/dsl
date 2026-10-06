@@ -7,6 +7,10 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_executable(zombies)
 
+if (APPLE)
+    target_link_libraries(zombies PUBLIC "-framework CoreFoundation" "-framework CoreServices")
+endif ()
+
 find_package(glfw3 3.4 REQUIRED)
 #FetchContent_Declare(dvk
 #    GIT_REPOSITORY https://github.com/willhuff0/dvk
@@ -23,6 +27,8 @@ target_link_libraries(zombies
         assimp::assimp
         nlohmann_json::nlohmann_json
 )
+
+target_include_directories(zombies PRIVATE third-party)
 
 target_sources(zombies
     PRIVATE
@@ -43,14 +49,12 @@ target_sources(zombies
         src/HotReload.cpp
         src/utils/InputStream.cpp
         src/utils/GrowingBuffer.cpp
-        src/Gltf.cpp
+#        src/Gltf.cpp
         src/Renderer.cpp
     PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
     FILES
-        include/deps/FastNoiseLite.h
-        include/deps/stb_image.h
         include/Platform.hpp
         include/Window.hpp
         include/Game.hpp
@@ -71,7 +75,7 @@ target_sources(zombies
         include/utils/InputStream.hpp
         include/utils/Serialization.hpp
         include/utils/GrowingBuffer.hpp
-        include/Gltf.hpp
+#        include/Gltf.hpp
         include/Renderer.hpp
 )
 

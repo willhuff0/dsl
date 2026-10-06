@@ -9,7 +9,7 @@ public:
     bool Push(uint32_t frameIndex, const void* src, uint64_t dsize);
     void Pop(uint64_t dsize);
 
-    bool Reserve(uint64_t size);
+    bool Reserve(uint32_t frameIndex, uint64_t size);
 
     [[nodiscard]] const dvk::Buffer::Ref& GetBuffer() const;
     [[nodiscard]] dvk::Buffer::Ref& GetBuffer();

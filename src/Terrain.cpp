@@ -244,19 +244,18 @@ Terrain::Terrain() {
         .SetVertexInput({ vk::VertexInputBindingDescription {
             .binding = 0,
             .stride = sizeof(glm::vec2),
-            .inputRate = vk::VertexInputRate::eVertex,
+            .inputRate = vk::VertexInputRate::eInstance,
         }}, {{ vk::VertexInputAttributeDescription {
             .location = 0,
             .binding = 0,
             .format = vk::Format::eR32G32Sfloat,
             .offset = 0,
         }}})
-        .SetTopology(vk::PrimitiveTopology::ePointList)
+        .SetTopology(vk::PrimitiveTopology::eLineList)
         .AddStage(vk::ShaderStageFlagBits::eVertex, graphicsNormalsShader, "vs_main")
             .SetConstant(0, HEIGHTMAP_SIZE)
             .SetConstant(1, METERS_PER_TEXEL)
             .FinishStage()
-        .AddStage(vk::ShaderStageFlagBits::eGeometry, graphicsNormalsShader, "gs_main").FinishStage()
         .AddStage(vk::ShaderStageFlagBits::eFragment, graphicsNormalsShader, "fs_main").FinishStage()
         .SetSingleAttachment(GetRenderTextureFormat())
         .EnableDepth(GetDepthFormat())
@@ -372,7 +371,7 @@ void Terrain::Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32
             commandBuffer.SetGraphicsPipeline(normalsPipeline);
             commandBuffer.SetVertexBuffer(0, vertexBuffer[i]);
             commandBuffer.SetIndexBuffer(indexBuffer[i], vk::IndexType::eUint32);
-            commandBuffer.DrawIndexed(indexCounts[i]);
+            commandBuffer.DrawInstancesIndexed(2, indexCounts[i]);
         }
     }
 }

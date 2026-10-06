@@ -1,5 +1,5 @@
 #include "../Globals.slang"
-#include "RendererStructs.slang"
+#include "../renderer/RendererStructs.slang"
 
 [[vk::binding(1, 0)]] StructuredBuffer<Instance> Instances;
 [[vk::binding(2, 1)]] StructuredBuffer<uint32_t> VisibleInstanceIndices;

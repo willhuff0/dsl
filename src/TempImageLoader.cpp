@@ -3,9 +3,9 @@
 #include "Provider.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
-#include <deps/stb_image.h>
+#include <stb_image.h>
 
-#include <deps/float16_t.hpp>
+#include <float16_t.hpp>
 using numeric::float16_t;
 
 #include <memory>

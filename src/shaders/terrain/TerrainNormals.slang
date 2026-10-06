@@ -13,11 +13,6 @@ struct VertexInput {
 };
 
 struct VertexOutput {
-    float4 worldPosition;
-    float3 normal;
-};
-
-struct GeometryOutput {
     float4 position : SV_Position;
     float3 color;
 };
@@ -29,7 +24,7 @@ struct LodConstants {
 [vk::push_constant] ConstantBuffer<LodConstants> u_lod;
 
 [shader("vertex")]
-VertexOutput vs_main(VertexInput input) {
+VertexOutput vs_main(VertexInput input, uint vertexID : SV_VertexID) {
     bool isOuterEdge = max(abs(input.positionXZ.x), abs(input.positionXZ.y)) > (u_lod.range - 0.5);
     float snapLod = float(u_lod.lod);
     if (isOuterEdge) {
@@ -46,36 +41,25 @@ VertexOutput vs_main(VertexInput input) {
         (worldTexelXZ.y % HEIGHTMAP_SIZE + HEIGHTMAP_SIZE) % HEIGHTMAP_SIZE
     );
     float height = u_heightMap.Load(int3(wrapped, 0));
-    float4 normal = u_normalMap.Load(int3(wrapped, 0));
+    float3 normal = u_normalMap.Load(int3(wrapped, 0)).xyz;
+
+    float3 pos = float3(worldXZ.x, height, worldXZ.y);
+
+    const float lineLength = 1.0;
+    bool isTip = (vertexID & 1) != 0;
+
+    float3 vertexPos = pos + (isTip ? normal * lineLength : 0.0);
 
     VertexOutput output;
-    output.worldPosition = float4(worldXZ.x, height, worldXZ.y, 1.0);
-    output.normal = normal.xyz;
+    output.position = mul(u_global.viewProjMat, float4(vertexPos, 1.0));
+    output.color =
+       isTip
+            ? float3(1.0, 0.0, 0.0)
+            : float3(0.0, 1.0, 0.0);
     return output;
 }
 
-[shader("geometry")]
-[maxvertexcount(2)]
-void gs_main(point VertexOutput input[1], inout LineStream<GeometryOutput> outputStream) {
-    float3 pos = input[0].worldPosition.xyz;
-    float3 normal = input[0].normal; // Assuming normal is in appropriate space (e.g., World)
-    float lineLength = 1.0;
-
-    GeometryOutput v0;
-    v0.position = mul(u_global.viewProjMatrix, float4(pos, 1.0));
-    v0.color = float3(0.0, 1.0, 0.0); // Base color
-    outputStream.Append(v0);
-
-    GeometryOutput v1;
-    v1.position = mul(u_global.viewProjMatrix, float4(pos + normal * lineLength, 1.0));
-    v1.color = float3(1.0, 0.0, 0.0); // Tip color
-    outputStream.Append(v1);
-
-    outputStream.RestartStrip();
-}
-
-
 [shader("fragment")]
-float4 fs_main(GeometryOutput input) : SV_Target {
+float4 fs_main(VertexOutput input) : SV_Target {
     return float4(input.color, 1.0);
 }
