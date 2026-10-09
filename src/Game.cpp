@@ -18,7 +18,9 @@ Game::Game(Platform* platform, Window::Ref window, dvk::Surface& surface, dvk::P
     postProcessing = std::make_unique<PostProcessing>();
     skybox = std::make_unique<Skybox>(Skybox::FromEquirectangularMap(LoadHDRI(SKYBOX_HDRI_PATH)));
     terrain = std::make_unique<Terrain>();
-    model = std::make_unique<Model>(Model::LoadFile(0, RESOURCE_BASEPATH "/models/FlightHelmet.glb"));
+    GetCommandEncoder().ExecuteAndWait([&](dvk::CommandBuffer& commandBuffer) {
+        model = std::make_unique<Model>(Model::LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/models/FlightHelmet.glb"));
+    });
     model->GetRoot()->SetLScale(glm::vec3(50.0f, 50.0f, 50.0f));
     model->GetRoot()->SetLPos(glm::vec3(0.0f, -50.0f, 0.0f));
 

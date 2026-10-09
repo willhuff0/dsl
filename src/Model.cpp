@@ -88,6 +88,7 @@ namespace {
     };
 
     struct ModelLoadingContext {
+        dvk::CommandBuffer& commandBuffer;
         uint32_t frameIndex;
         const aiScene* scene;
         const std::filesystem::path& dir;
@@ -330,7 +331,7 @@ static MaterialIndex loadMaterial(
         .emissiveFactor = glm::vec3(emissiveFactor.r, emissiveFactor.g, emissiveFactor.b),
         .alphaCutoff = alphaCutoff,
     };
-    MaterialIndex rendererMaterialIndex = GetRenderer().AddMaterial(context.frameIndex, ModelShaders::Get().GetOpaque(), &materialDesc, sizeof(Material));
+    MaterialIndex rendererMaterialIndex = GetRenderer().AddMaterial(context.commandBuffer, context.frameIndex, ModelShaders::Get().GetOpaque(), &materialDesc, sizeof(Material));
     context.materials.emplace(aiMaterialIndex, rendererMaterialIndex);
     return rendererMaterialIndex;
 }
@@ -386,7 +387,7 @@ static std::pair<MeshIndex, MaterialIndex> loadMesh(
         desc.vertices.emplace_back(vertex);
     }
 
-    MeshIndex rendererMeshIndex = GetRenderer().AddMesh(context.frameIndex, ModelShaders::Get().GetOpaque(), desc);
+    MeshIndex rendererMeshIndex = GetRenderer().AddMesh(context.commandBuffer, context.frameIndex, ModelShaders::Get().GetOpaque(), desc);
     context.meshes.emplace(aiMeshIndex, rendererMeshIndex);
     return std::make_pair(rendererMeshIndex, rendererMaterialIndex);
 }
@@ -414,7 +415,7 @@ static Node::Ref loadNode(ModelLoadingContext& context, const aiNode* node) {
             .materialIndex = rendererMaterialIndex,
             .isDynamic = true,
         };
-        GetRenderer().AddInstance(context.frameIndex, component, desc);
+        GetRenderer().AddInstance(context.commandBuffer, context.frameIndex, component, desc);
     }
 
     for (uint32_t i = 0; i < node->mNumChildren; i++) {
@@ -425,7 +426,7 @@ static Node::Ref loadNode(ModelLoadingContext& context, const aiNode* node) {
     return result;
 }
 
-Model Model::LoadFile(uint32_t frameIndex, const std::string& path) {
+Model Model::LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::string& path) {
     Assimp::Importer importer;
     const aiScene* scene = importer.ReadFile(path.c_str(), IMPORT_FLAGS);
     if (scene == nullptr || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || scene->mRootNode == nullptr) {
@@ -444,6 +445,7 @@ Model Model::LoadFile(uint32_t frameIndex, const std::string& path) {
     meshes.reserve(scene->mNumMeshes);
 
     ModelLoadingContext context {
+        .commandBuffer = commandBuffer,
         .frameIndex = frameIndex,
         .scene = scene,
         .dir = dir,

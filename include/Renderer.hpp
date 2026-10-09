@@ -128,11 +128,9 @@ public:
     void SetShaderPipeline(uint32_t frameIndex, ShaderIndex shader, const dvk::GraphicsPipeline::Ref& pipeline);
     TextureIndex AddTexture(const dvk::TextureView::Ref& textureView);
     SamplerIndex AddSampler(const dvk::Sampler::Ref& sampler);
-    MaterialIndex AddMaterial(uint32_t frameIndex, ShaderIndex shader, const void* src, uint64_t size);
-    MeshIndex AddMesh(uint32_t frameIndex, ShaderIndex shader, const MeshDesc& meshDesc);
-    std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> AddInstance(uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc);
-
-    // void SetDynamicFrameData(DynamicFrameDataIndex dynamicFrameDataIndex, const InstanceFrameData& frameData);
+    MaterialIndex AddMaterial(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const void* src, uint64_t size);
+    MeshIndex AddMesh(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const MeshDesc& meshDesc);
+    std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> AddInstance(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc);
 
     void Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
     void Draw(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
@@ -150,8 +148,8 @@ private:
     dvk::BindSetLayout::Ref _shaderPassBindSetLayout;
     dvk::BindSetLayout::Ref _texturesBindSetLayout;
 
-    int32_t _vertexCount;
-    uint32_t _indexCount;
+    int32_t _vertexCount = 0;
+    uint32_t _indexCount = 0;
     GrowingBuffer _vertexArray;
     GrowingBuffer _indexArray;
     dvk::BindSet::Ref _texturesSamplersBindSet;

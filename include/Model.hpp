@@ -6,8 +6,7 @@
 #include <string>
 
 struct Model {
-    static Model LoadFile(uint32_t frameIndex, const std::string& path);
-
+    static Model LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::string& path);
     static void FreeShaders();
 
     Node::Ref GetRoot() const;

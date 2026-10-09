@@ -3,7 +3,6 @@
 #include "utils/Paths.hpp"
 #include "components/InstanceComponent.hpp"
 
-static constexpr uint64_t BUFFER_START_SIZE = 1024;
 static constexpr uint64_t BUFFER_GROW_FACTOR = 2;
 static constexpr uint32_t MAX_SHADER_PASSES = 64;
 static constexpr uint32_t MAX_TEXTURES = 128;
@@ -20,28 +19,23 @@ Renderer::Renderer()
     : _vertexArray(
         "[Mesh Renderer] Vertices",
         vk::BufferUsageFlagBits::eVertexBuffer,
-        vk::PipelineStageFlagBits2::eVertexShader,
-        BUFFER_START_SIZE),
+        vk::PipelineStageFlagBits2::eVertexShader),
     _indexArray(
         "[Mesh Renderer] Indices",
         vk::BufferUsageFlagBits::eIndexBuffer,
-        vk::PipelineStageFlagBits2::eVertexShader,
-        BUFFER_START_SIZE),
+        vk::PipelineStageFlagBits2::eVertexShader),
     _meshMetadata(
         "[Mesh Renderer] Mesh Metadata",
         vk::BufferUsageFlagBits::eStorageBuffer,
-        vk::PipelineStageFlagBits2::eComputeShader,
-        BUFFER_START_SIZE),
+        vk::PipelineStageFlagBits2::eComputeShader),
     _instances(
         "[Mesh Renderer] Instances",
         vk::BufferUsageFlagBits::eStorageBuffer,
-        vk::PipelineStageFlagBits2::eComputeShader,
-        BUFFER_START_SIZE),
+        vk::PipelineStageFlagBits2::eComputeShader),
     _staticInstanceFrameData(
         "[Mesh Renderer] Static Instance Frame Data",
         vk::BufferUsageFlagBits::eStorageBuffer,
-        vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader,
-        BUFFER_START_SIZE)
+        vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader)
 {
     _setNeedRebindMeshMetadata();
     _setNeedRebindInstances();
@@ -275,17 +269,17 @@ SamplerIndex Renderer::AddSampler(const dvk::Sampler::Ref& sampler) {
     return index;
 }
 
-MaterialIndex Renderer::AddMaterial(uint32_t frameIndex, ShaderIndex shader, const void* src, uint64_t size) {
+MaterialIndex Renderer::AddMaterial(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const void* src, uint64_t size) {
     auto& shaderPass = _shaderPasses.at(shader);
 
-    if (shaderPass.materials.Push(frameIndex, src, size)) {
+    if (shaderPass.materials.Push(commandBuffer, frameIndex, src, size)) {
         shaderPass.SetNeedRebindMaterials();
     }
 
     return shaderPass.numMaterials++;
 }
 
-MeshIndex Renderer::AddMesh(uint32_t frameIndex, ShaderIndex shader, const MeshDesc& meshDesc) {
+MeshIndex Renderer::AddMesh(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const MeshDesc& meshDesc) {
     MeshMetadata meshMetadata = {
         .indexCount = static_cast<uint32_t>(meshDesc.indices.size()),
         .firstIndex = _indexCount,
@@ -296,10 +290,10 @@ MeshIndex Renderer::AddMesh(uint32_t frameIndex, ShaderIndex shader, const MeshD
     _indexCount += meshDesc.indices.size();
     _vertexCount += static_cast<int32_t>(meshDesc.vertices.size());
 
-    _indexArray.Push(frameIndex, meshDesc.indices.data(), meshDesc.indices.size() * sizeof(uint32_t));
-    _vertexArray.Push(frameIndex, meshDesc.vertices.data(), meshDesc.vertices.size() * sizeof(VertexDesc));
+    _indexArray.Push(commandBuffer, frameIndex, meshDesc.indices.data(), meshDesc.indices.size() * sizeof(uint32_t));
+    _vertexArray.Push(commandBuffer, frameIndex, meshDesc.vertices.data(), meshDesc.vertices.size() * sizeof(VertexDesc));
 
-    if (_meshMetadata.Push(frameIndex, &meshMetadata, sizeof(MeshMetadata))) {
+    if (_meshMetadata.Push(commandBuffer, frameIndex, &meshMetadata, sizeof(MeshMetadata))) {
         _setNeedRebindMeshMetadata();
     }
 
@@ -312,7 +306,7 @@ MeshIndex Renderer::AddMesh(uint32_t frameIndex, ShaderIndex shader, const MeshD
     return _numMeshes++;
 }
 
-std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> Renderer::AddInstance(uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc) {
+std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> Renderer::AddInstance(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc) {
     InstanceIndex index = _numStaticInstances + _numDynamicInstances;
 
     Instance instance {
@@ -333,14 +327,14 @@ std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> Renderer::AddInst
         InstanceFrameData data {
             .modelMat = component->GetNode()->GetMatrix(),
         };
-        if (_staticInstanceFrameData.Push(frameIndex, &data, sizeof(InstanceFrameData))) {
+        if (_staticInstanceFrameData.Push(commandBuffer, frameIndex, &data, sizeof(InstanceFrameData))) {
             _setNeedRebindStaticInstanceFrameData();
         }
 
         instance.frameDataIndex = staticIndex;
     }
 
-    if (_instances.Push(frameIndex, &instance, sizeof(Instance))) {
+    if (_instances.Push(commandBuffer, frameIndex, &instance, sizeof(Instance))) {
         _setNeedRebindInstances();
     }
 
@@ -350,11 +344,10 @@ std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> Renderer::AddInst
     return std::make_pair(index, dynamicFrameDataIndex);
 }
 
-// void Renderer::SetDynamicFrameData(DynamicFrameDataIndex dynamicFrameDataIndex, const InstanceFrameData& frameData) {
-//     _dynamicInstanceFrameDataStaging[dynamicFrameDataIndex] = frameData;
-// }
-
 void Renderer::Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+    if (_vertexArray.GetBuffer() == nullptr) _vertexArray.Recreate(commandBuffer, frameIndex);
+    if (_indexArray.GetBuffer() == nullptr) _indexArray.Recreate(commandBuffer, frameIndex);
+
     for (auto& shaderPass : _shaderPasses) {
         if (!shaderPass.needRebindMaterials[frameIndex]) continue;
 
@@ -374,18 +367,21 @@ void Renderer::Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
     ) {
         dvk::Binder staticBinder;
         if (_needRebindMeshMetadata[frameIndex]) {
+            if (_meshMetadata.GetBuffer() == nullptr) _meshMetadata.Recreate(commandBuffer, frameIndex);
             staticBinder.BindBuffer(0)
                 .SetBufferType(vk::DescriptorType::eStorageBuffer)
                 .SetBuffer(_meshMetadata.GetBuffer())
                 .FinishBuffer();
         }
         if (_needRebindInstances[frameIndex]) {
+            if (_instances.GetBuffer() == nullptr) _instances.Recreate(commandBuffer, frameIndex);
             staticBinder.BindBuffer(1)
                 .SetBufferType(vk::DescriptorType::eStorageBuffer)
                 .SetBuffer(_instances.GetBuffer())
                 .FinishBuffer();
         }
         if (_needRebindStaticInstanceFrameData[frameIndex]) {
+            if (_staticInstanceFrameData.GetBuffer() == nullptr) _staticInstanceFrameData.Recreate(commandBuffer, frameIndex);
             staticBinder.BindBuffer(2)
                 .SetBufferType(vk::DescriptorType::eStorageBuffer)
                 .SetBuffer(_staticInstanceFrameData.GetBuffer())

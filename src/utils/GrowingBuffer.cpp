@@ -6,62 +6,9 @@
 constexpr uint64_t GROW_FACTOR = 2;
 
 GrowingBuffer::GrowingBuffer(std::string label, vk::BufferUsageFlags usage, vk::PipelineStageFlags2 stages, uint64_t capacity)
-    : label(std::move(label)), usage(usage), stages(stages), capacity(capacity) {
-    if (capacity != 0) {
-        recreate(0);
-    }
-}
+    : label(std::move(label)), usage(usage), stages(stages), capacity(capacity) { }
 
-void GrowingBuffer::recreate(uint32_t frameIndex) {
-    auto newBuffer = dvk::Buffer::Create(GetDevice())
-        .SetLabel(label)
-        .SetUsage(usage | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst)
-        .SetSize(capacity)
-        .EnableCopyToAndFlush()
-        .Build();
-
-    if (buffer != nullptr && size > 0) {
-        GetCommandEncoder().Execute(frameIndex, [&](dvk::CommandBuffer& commandBuffer) {
-            vk::BufferMemoryBarrier2 srcBarrier {
-                .srcStageMask = stages,
-                .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
-                .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
-                .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
-                .buffer = buffer->GetBuffer(),
-                .offset = 0,
-                .size = vk::WholeSize,
-            };
-            commandBuffer.GetCommandBuffer().pipelineBarrier2({
-                .bufferMemoryBarrierCount = 1,
-                .pBufferMemoryBarriers = &srcBarrier,
-            });
-            commandBuffer.GetCommandBuffer().copyBuffer(buffer->GetBuffer(), newBuffer->GetBuffer(), { vk::BufferCopy {
-                .srcOffset = 0,
-                .dstOffset = 0,
-                .size = size,
-            }});
-            vk::BufferMemoryBarrier2 dstBarrier {
-                .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
-                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-                .dstStageMask = stages,
-                .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-                .buffer = buffer->GetBuffer(),
-                .offset = 0,
-                .size = vk::WholeSize,
-            };
-            commandBuffer.GetCommandBuffer().pipelineBarrier2({
-                .bufferMemoryBarrierCount = 1,
-                .pBufferMemoryBarriers = &dstBarrier,
-            });
-        });
-
-        GetCommandEncoder().DropRefOnceNotInUse(frameIndex, buffer);
-    }
-
-    buffer = newBuffer;
-}
-
-bool GrowingBuffer::Push(uint32_t frameIndex, const void* src, uint64_t dsize) {
+bool GrowingBuffer::Push(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const void* src, uint64_t dsize) {
     if (dsize == 0) return false;
 
     bool didResize = false;
@@ -76,7 +23,10 @@ bool GrowingBuffer::Push(uint32_t frameIndex, const void* src, uint64_t dsize) {
                 capacity *= GROW_FACTOR;
             } while (size + dsize > capacity);
         }
-        recreate(frameIndex);
+        recreate(commandBuffer, frameIndex);
+        didResize = true;
+    } else if (buffer == nullptr) {
+        recreate(commandBuffer, frameIndex);
         didResize = true;
     }
     buffer->CopyToAndFlush(src, size, dsize);
@@ -88,13 +38,17 @@ void GrowingBuffer::Pop(uint64_t dsize) {
     size -= dsize;
 }
 
-bool GrowingBuffer::Reserve(uint32_t frameIndex, uint64_t size) {
-    if (size > capacity) {
-        capacity = size;
-        recreate(frameIndex);
+bool GrowingBuffer::Reserve(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, uint64_t newCapacity) {
+    if (buffer == nullptr || newCapacity > capacity) {
+        capacity = newCapacity;
+        recreate(commandBuffer, frameIndex);
         return true;
     }
     return false;
+}
+
+void GrowingBuffer::Recreate(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+    recreate(commandBuffer, frameIndex);
 }
 
 const dvk::Buffer::Ref& GrowingBuffer::GetBuffer() const {
@@ -111,4 +65,40 @@ uint64_t GrowingBuffer::GetSize() const {
 
 uint64_t GrowingBuffer::GetCapacity() const {
     return capacity;
+}
+
+void GrowingBuffer::recreate(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+    auto newBuffer = dvk::Buffer::Create(GetDevice())
+        .SetLabel(label)
+        .SetUsage(usage | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst)
+        .SetSize(capacity)
+        .EnableCopyToAndFlush()
+        .Build();
+
+    if (buffer != nullptr) {
+        if (size > 0) {
+            commandBuffer
+                .InsertBarriers()
+                    .AddBufferBarrier()
+                        .SetBuffer(buffer)
+                        .SetStages(stages, vk::PipelineStageFlagBits2::eTransfer)
+                        .SetAccess(vk::AccessFlagBits2::eMemoryWrite, vk::AccessFlagBits2::eTransferRead)
+                        .FinishBufferBarrier()
+                    .FinishBarriers()
+                .CopyBuffer(buffer, newBuffer)
+                    .AddRegion(0, 0, size)
+                    .FinishBufferCopy()
+                .InsertBarriers()
+                    .AddBufferBarrier()
+                        .SetBuffer(newBuffer)
+                        .SetStages(vk::PipelineStageFlagBits2::eTransfer, stages)
+                        .SetAccess(vk::AccessFlagBits2::eTransferWrite, vk::AccessFlagBits2::eMemoryRead)
+                        .FinishBufferBarrier()
+                    .FinishBarriers();
+        }
+
+        GetCommandEncoder().DropRefOnceNotInUse(frameIndex, buffer);
+    }
+
+    buffer = newBuffer;
 }
