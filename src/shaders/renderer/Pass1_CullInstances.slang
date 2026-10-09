@@ -1,11 +1,14 @@
 #include "../Globals.slang"
 #include "RendererStructs.slang"
 
+[[vk::binding(0, 0)]] StructuredBuffer<MeshMetadata> MeshMetadatas;
 [[vk::binding(1, 0)]] StructuredBuffer<Instance> Instances;
+[[vk::binding(2, 0)]] StructuredBuffer<InstanceFrameData> StaticInstanceFrameDatas;
 
-[[vk::binding(0, 1)]] StructuredBuffer<uint32_t> MeshInstanceIndexOffsets;
-[[vk::binding(1, 1)]] RWStructuredBuffer<Atomic<uint32_t>> MeshInstanceCounts;
-[[vk::binding(2, 1)]] RWStructuredBuffer<uint32_t> VisibleInstanceIndices;
+[[vk::binding(0, 1)]] StructuredBuffer<InstanceFrameData> DynamicInstanceFrameDatas;
+[[vk::binding(1, 1)]] StructuredBuffer<uint32_t> MeshInstanceIndexOffsets;
+[[vk::binding(2, 1)]] RWStructuredBuffer<Atomic<uint32_t>> MeshInstanceCounts;
+[[vk::binding(3, 1)]] RWStructuredBuffer<uint32_t> VisibleInstanceIndices;
 
 [[vk::binding(0, 2)]] ConstantBuffer<GlobalUniforms> Globals;
 
@@ -18,6 +21,13 @@ void CullInstances(uint32_t3 threadId: SV_DispatchThreadID) {
     if (instanceIndex >= NumInstances) return;
 
     Instance instance = Instances[instanceIndex];
+    InstanceFrameData instanceFrameData;
+    if (instance.isDynamic) {
+        instanceFrameData = DynamicInstanceFrameDatas[instance.frameDataIndex];
+    } else {
+        instanceFrameData = StaticInstanceFrameDatas[instance.frameDataIndex];
+    }
+    MeshMetadata meshMetadata = MeshMetadatas[instance.meshIndex];
 
     // Cull here
 

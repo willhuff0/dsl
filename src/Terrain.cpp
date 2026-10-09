@@ -7,8 +7,6 @@
 
 #include <string>
 
-#include "dvk/CommandBuffer.hpp"
-
 constexpr float METERS_PER_TEXEL = 1.0f;
 constexpr uint32_t HEIGHTMAP_SIZE = 4096;
 constexpr float MATERIAL_TILING = 0.125f;
@@ -105,8 +103,8 @@ Terrain::Terrain() {
             .FinishPushConstantRange()
         .Build();
 
-    generatorPipelineWatcher = HotReload::CreateAndWatch(TERRAIN_GENERATOR_SHADER_PATH, [this]() {
-        auto generatorShader = dvk::Shader::LoadFile(GetDevice(), TERRAIN_GENERATOR_SHADER_PATH, "Terrain Generator");
+    generatorPipelineWatcher = ShaderHotReload::CreateAndWatch(TERRAIN_GENERATOR_SHADER_PATH, [this](const auto& path) {
+        auto generatorShader = dvk::Shader::LoadFile(GetDevice(), path, "Terrain Generator");
         generatorPositionsPipeline = dvk::ComputePipeline::Create(GetDevice(), generatorPipelineLayout)
             .SetLabel("Terrain Positions Generator")
             .SetStage(generatorShader, "GeneratePositions")
@@ -185,8 +183,8 @@ Terrain::Terrain() {
             .FinishPushConstantRange()
         .Build();
 
-    graphicsPipelineWatcher = HotReload::CreateAndWatch(TERRAIN_SHADER_PATH, [this]() {
-        auto graphicsShader = dvk::Shader::LoadFile(GetDevice(), TERRAIN_SHADER_PATH, "Terrain Graphics");
+    graphicsPipelineWatcher = ShaderHotReload::CreateAndWatch(TERRAIN_SHADER_PATH, [this](const auto& path) {
+        auto graphicsShader = dvk::Shader::LoadFile(GetDevice(), path, "Terrain Graphics");
         graphicsPipeline = dvk::GraphicsPipeline::Create(GetDevice(), graphicsPipelineLayout)
             .SetLabel("Terrain Graphics")
             .SetVertexInput({ vk::VertexInputBindingDescription {

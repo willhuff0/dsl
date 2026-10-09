@@ -1,41 +1,31 @@
 #pragma once
 
 #include <dvk/dvk.hpp>
-#include <thomasmonkman-filewatch/FileWatch.hpp>
-#undef CreateWindow
-#undef LoadImage
 
 #include <functional>
-#include <string>
-#include <memory>
-#include <mutex>
 #include <vector>
 #include <unordered_map>
+#include <string>
+#include <memory>
+#include <filesystem>
 
-class WatcherInst {
-public:
-    WatcherInst(const std::string& path, std::function<void(const std::string& path, const filewatch::Event event)> callback);
-
-private:
-    filewatch::FileWatch<std::string> fileWatch;
-};
-using Watcher = std::shared_ptr<WatcherInst>;
+using HotReloadCallback = std::function<void(uint32_t frameIndex)>;
+using Watcher = std::shared_ptr<void>;
 
 class HotReload {
 public:
-    // static void Trigger(const dvk::Device& device, const std::function<void()>& updator);
-    static void Attempt(const dvk::Device& device);
+    static void Attempt(uint32_t frameIndex, const dvk::Device& device);
 
-    static Watcher WatchCustom(const std::string& path, std::function<void(const std::string& path, const filewatch::Event event)> callback);
-    // static Watcher WatchExisting(const std::string& path, std::function<void()> updator);
-    static Watcher CreateAndWatch(const std::string& path, std::function<void()> updator);
+    static Watcher Watch(const std::string& path, const HotReloadCallback& callback);
+    static Watcher CreateAndWatch(uint32_t frameIndex, const std::string& path, const HotReloadCallback& callback);
 
 private:
-    static void enqueue(uint64_t watcherId, std::function<void()> updator);
+    struct FileWatch {
+        std::filesystem::file_time_type lastWriteTime;
+        std::vector<std::pair<uint64_t, HotReloadCallback>> callbacks;
+        uint64_t nextCallbackId = 0;
+    };
 
-    static std::atomic<uint64_t> nextWatcherId;
-    static std::atomic<bool> hotReloadRequested;
-    static std::mutex updateQueueMutex;
-    static std::vector<uint64_t> updateQueue;
-    static std::unordered_map<uint64_t, std::function<void()>> updateQueueMap;
+    static std::vector<std::string> _paths;
+    static std::unordered_map<std::string, FileWatch> _pathToFileWatch;
 };

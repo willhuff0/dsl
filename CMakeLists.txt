@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 4.0)
 include(FetchContent)
 
-project(zombies)
+project(dsl)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(zombies)
+add_executable(dsl)
 
 if (APPLE)
-    target_link_libraries(zombies PUBLIC "-framework CoreFoundation" "-framework CoreServices")
+    target_link_libraries(dsl PUBLIC "-framework CoreFoundation" "-framework CoreServices")
 endif ()
 
 find_package(glfw3 3.4 REQUIRED)
@@ -20,7 +20,7 @@ find_package(glfw3 3.4 REQUIRED)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../dvk ${CMAKE_CURRENT_BINARY_DIR}/dvk)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(assimp REQUIRED)
-target_link_libraries(zombies
+target_link_libraries(dsl
     PRIVATE
         glfw
         dvk
@@ -28,9 +28,9 @@ target_link_libraries(zombies
         nlohmann_json::nlohmann_json
 )
 
-target_include_directories(zombies PRIVATE third-party)
+target_include_directories(dsl PRIVATE third-party)
 
-target_sources(zombies
+target_sources(dsl
     PRIVATE
         src/main.cpp
         src/Platform.cpp
@@ -41,16 +41,19 @@ target_sources(zombies
         src/TempImageLoader.cpp
         src/FlyCamera.cpp
         src/Skybox.cpp
-#        src/Node.cpp
+        src/Node.cpp
         src/PostProcessing.cpp
         src/Vehicle.cpp
         src/Terrain.cpp
         src/TempModelLoader.cpp
         src/HotReload.cpp
+        src/ShaderHotReload.cpp
         src/utils/InputStream.cpp
         src/utils/GrowingBuffer.cpp
-#        src/Gltf.cpp
+        src/components/InstanceComponent.cpp
         src/Renderer.cpp
+        src/Model.cpp
+#        src/Gltf.cpp
     PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
@@ -67,19 +70,22 @@ target_sources(zombies
         include/FlyCamera.hpp
         include/Skybox.hpp
         include/PostProcessing.hpp
-#        include/Node.hpp
+        include/Node.hpp
         include/Vehicle.hpp
         include/Terrain.hpp
         include/TempModelLoader.hpp
         include/HotReload.hpp
+        include/ShaderHotReload.hpp
         include/utils/InputStream.hpp
         include/utils/Serialization.hpp
         include/utils/GrowingBuffer.hpp
-#        include/Gltf.hpp
+        include/components/InstanceComponent.hpp
         include/Renderer.hpp
+        include/Model.hpp
+#        include/Gltf.hpp
 )
 
-target_include_directories(zombies
+target_include_directories(dsl
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
            $<INSTALL_INTERFACE:include>
 )
@@ -151,7 +157,7 @@ target_include_directories(zombies
 #)
 #
 ## Call the function
-#target_compile_slang_shaders(zombies
+#target_compile_slang_shaders(dsl
 #    SOURCES ${SHADER_SOURCES}
 #    BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders"
 #    OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/res/shaders"

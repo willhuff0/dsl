@@ -1,66 +1,60 @@
 #include <HotReload.hpp>
 
-#include <thomasmonkman-filewatch/FileWatch.hpp>
 #include <iostream>
 
-WatcherInst::WatcherInst(const std::string& path, std::function<void(const std::string& path, const filewatch::Event event)> callback)
-    : fileWatch(path, std::move(callback)) { }
+void HotReload::Attempt(uint32_t frameIndex, const dvk::Device& device) {
+    std::vector<std::string> changedPaths;
+    for (const auto& path : _paths) {
+        auto lastWriteTime = std::filesystem::last_write_time(path);
 
-// void HotReload::Trigger(const dvk::Device& device, const std::function<void()>& updator) {
-//     std::cout << "Hot Reloading!" << std::endl;
-//     device.GetDevice().waitIdle();
-//     updator();
-//     device.GetDevice().waitIdle();
-//     std::cout << "Hot Reload Complete!" << std::endl;
-// }
+        auto& fileWatch = _pathToFileWatch[path];
+        if (fileWatch.lastWriteTime != lastWriteTime) {
+            changedPaths.emplace_back(path);
+        }
+        fileWatch.lastWriteTime = lastWriteTime;
+    }
 
-void HotReload::Attempt(const dvk::Device& device) {
-    if (!hotReloadRequested) return;
+    if (changedPaths.empty()) return;
+
     std::cout << "Hot Reloading!" << std::endl;
-    std::lock_guard lock(updateQueueMutex);
     device.GetDevice().waitIdle();
-    for (uint64_t watcherId : updateQueue) {
-        updateQueueMap[watcherId]();
+    for (const auto& path : changedPaths) {
+        const auto& fileWatch = _pathToFileWatch[path];
+        for (const auto& callback : fileWatch.callbacks) {
+            callback.second(frameIndex);
+        }
     }
     device.GetDevice().waitIdle();
-    updateQueue.clear();
-    updateQueueMap.clear();
-    hotReloadRequested = false;
     std::cout << "Hot Reload Complete!" << std::endl;
 }
 
-Watcher HotReload::WatchCustom(const std::string& path, std::function<void(const std::string& path, const filewatch::Event event)> callback) {
-    return std::make_unique<WatcherInst>(path, std::move(callback));
-}
+Watcher HotReload::Watch(const std::string& path, const HotReloadCallback& callback) {
+    auto lastWriteTime = std::filesystem::last_write_time(path);
 
-// Watcher HotReload::WatchExisting(const std::string& path, std::function<void()> updator) {
-//     return std::make_unique<WatcherInst>(path, [updator = std::move(updator)](const std::string& path, const filewatch::Event event) {
-//         HotReload::Trigger(device, updator);
-//     });
-// }
-Watcher HotReload::CreateAndWatch(const std::string& path, std::function<void()> updator) {
-    updator();
-    return std::make_unique<WatcherInst>(path, [id = nextWatcherId++, updator = std::move(updator)](const std::string& path, const filewatch::Event event) {
-        enqueue(id, updator);
+    _paths.emplace_back(path);
+    auto iter = _pathToFileWatch.emplace(path, FileWatch {
+        .lastWriteTime = lastWriteTime,
+    });
+    uint64_t callbackId = iter.first->second.nextCallbackId++;
+    iter.first->second.callbacks.emplace_back(callbackId, callback);
+
+    return std::shared_ptr<void>(nullptr, [path, callbackId](void* _) {
+        std::erase_if(_paths, [&](const auto& otherPath) {
+            return path == otherPath;
+        });
+        std::erase_if(_pathToFileWatch[path].callbacks, [&](const std::pair<uint64_t, HotReloadCallback>& otherCallback) {
+            return callbackId == otherCallback.first;
+        });
+        if (_pathToFileWatch[path].callbacks.empty()) {
+            _pathToFileWatch.erase(path);
+        }
     });
 }
 
-void HotReload::enqueue(uint64_t watcherId, std::function<void()> updator) {
-    std::lock_guard lock(updateQueueMutex);
-
-    auto iter = updateQueueMap.find(watcherId);
-    if (iter != updateQueueMap.end()) {
-        std::erase(updateQueue, watcherId);
-    }
-
-    updateQueue.push_back(watcherId);
-    updateQueueMap[watcherId] = std::move(updator);
-
-    hotReloadRequested = true;
+Watcher HotReload::CreateAndWatch(uint32_t frameIndex, const std::string& path, const HotReloadCallback& callback) {
+    callback(frameIndex);
+    return Watch(path, callback);
 }
 
-std::atomic<uint64_t> HotReload::nextWatcherId;
-std::atomic<bool> HotReload::hotReloadRequested;
-std::mutex HotReload::updateQueueMutex;
-std::vector<uint64_t> HotReload::updateQueue;
-std::unordered_map<uint64_t, std::function<void()>> HotReload::updateQueueMap;
+std::vector<std::string> HotReload::_paths;
+std::unordered_map<std::string, HotReload::FileWatch> HotReload::_pathToFileWatch;

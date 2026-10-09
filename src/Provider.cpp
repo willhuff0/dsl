@@ -1,6 +1,7 @@
 #include "Provider.hpp"
 
 #include "Renderer.hpp"
+#include "Model.hpp"
 
 #include <utility>
 #include <optional>
@@ -115,6 +116,8 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
 }
 
 void FreeProvider() {
+    Model::FreeShaders();
+
     renderer = std::nullopt;
 
     globalBindSetLayout = nullptr;

@@ -9,7 +9,7 @@
 
 constexpr int numBlurIterations = 5;
 constexpr float bloomThreshold = 1.0f;
-constexpr float acesExposure = 1.2f;
+constexpr float acesExposure = 1.0f;
 constexpr auto toneMappingMode = ToneMappingMode::ACES;
 
 constexpr vk::Extent2D debugTextureExtent = { 512, 512 };
@@ -241,6 +241,9 @@ void PostProcessing::PostProcessingRenderPass(dvk::CommandBuffer& commandBuffer,
             .SetRenderArea({0, 0}, surfaceExtent)
             .SetColorAttachmentSimple(surfaceImageView)
             .FinishBeginRendering();
+        commandBuffer.SetViewport(
+            {0.0f, 0.0f},
+            {static_cast<float>(surfaceExtent.width), static_cast<float>(surfaceExtent.height)});
         commandBuffer.SetGraphicsPipeline(colorCorrectionPipeline);
         commandBuffer.SetBindSet(0, inputBindSet);
         commandBuffer.Draw(6);

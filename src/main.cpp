@@ -10,7 +10,7 @@ int main() {
 
     dvk::Instance instance(extensions);
 
-    auto window = platform.CreateWindow(1920, 1080, "Hello, SLGL!");
+    auto window = platform.CreateWindow(1920, 1080, "DSL");
     dvk::Surface surface(instance, window->GetVulkanSurface(instance.GetInstance()));
 
     dvk::Device device(instance, surface);

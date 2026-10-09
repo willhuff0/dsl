@@ -22,6 +22,6 @@ VertexOutput vs_main(uint vertexIndex : SV_VertexID)
     VertexOutput output;
     float2 xy = positions[vertexIndex];
     output.position = float4(xy * 2.0 - 1.0, 0.0, 1.0);
-    output.texCoords = float2(xy.x, 1.0 - xy.y);
+    output.texCoords = float2(xy.x, xy.y);
     return output;
 }

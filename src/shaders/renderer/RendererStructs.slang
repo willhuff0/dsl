@@ -1,20 +1,25 @@
 struct Instance {
-    float4x4 modelMatrix;
-
-    float3 aabbMin;
-    float3 aabbMax;
-
     uint32_t materialIndex;
     uint32_t meshIndex;
+
+    bool isDynamic;
+
+    uint32_t frameDataIndex;
+};
+
+struct InstanceFrameData {
+    float4x4 modelMat;
 };
 
 struct MeshMetadata {
     uint32_t indexCount;
     uint32_t firstIndex;
     int32_t vertexOffset;
-
     uint32_t shaderIndex;
-}
+
+    float3 aabbMin;
+    float3 aabbMax;
+};
 
 struct IndirectCommand {
     uint32_t indexCount;

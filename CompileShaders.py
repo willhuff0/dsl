@@ -11,6 +11,6 @@ for slang_file in SRC_DIR.rglob("*.slang"):
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        subprocess.run(["slangc", str(slang_file), "-target", "spirv", "-emit-spirv-directly", "-fvk-use-entrypoint-name", "-o", str(out_file)], check=True)
+        subprocess.run(["slangc", str(slang_file), "-target", "spirv", "-matrix-layout-column-major", "-emit-spirv-directly", "-g2", "-fvk-use-entrypoint-name", "-o", str(out_file)], check=True)
     except subprocess.CalledProcessError:
         pass

@@ -32,7 +32,7 @@ VertexOutput vs_main(VertexInput input, uint vertexID : SV_VertexID) {
     }
 
     float gridSize = METERS_PER_TEXEL * exp2(snapLod);
-    float2 snappedViewPos = floor(u_global.viewPosition.xz / gridSize) * gridSize;
+    float2 snappedViewPos = floor(u_global.viewPos.xz / gridSize) * gridSize;
 
     float2 worldXZ = snappedViewPos + input.positionXZ;
     int2 worldTexelXZ = int2(floor(worldXZ / METERS_PER_TEXEL + float2(HEIGHTMAP_SIZE / 2.0)));

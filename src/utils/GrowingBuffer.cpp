@@ -20,8 +20,8 @@ void GrowingBuffer::recreate(uint32_t frameIndex) {
         .EnableCopyToAndFlush()
         .Build();
 
-    if (buffer != nullptr) {
-        GetCommandEncoder().Execute([&](dvk::CommandBuffer& commandBuffer) {
+    if (buffer != nullptr && size > 0) {
+        GetCommandEncoder().Execute(frameIndex, [&](dvk::CommandBuffer& commandBuffer) {
             vk::BufferMemoryBarrier2 srcBarrier {
                 .srcStageMask = stages,
                 .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,

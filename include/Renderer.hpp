@@ -1,7 +1,7 @@
 #pragma once
 
 #include "utils/GrowingBuffer.hpp"
-#include "HotReload.hpp"
+#include "ShaderHotReload.hpp"
 #include "Provider.hpp"
 
 #include <dvk/dvk.hpp>
@@ -9,12 +9,19 @@
 #include <vector>
 #include <memory>
 #include <utility>
+#include <optional>
+
+class InstanceComponent;
 
 using ShaderIndex = uint32_t;
 using MaterialIndex = uint32_t;
 using TextureIndex = uint32_t;
+using SamplerIndex = uint32_t;
 using MeshIndex = uint32_t;
 using InstanceIndex = uint32_t;
+using DynamicFrameDataIndex = uint32_t;
+
+static constexpr uint32_t NULL_INDEX = 0xFFFFFFFF;
 
 struct VertexDesc {
     glm::vec3 position;
@@ -75,18 +82,30 @@ struct MeshMetadata {
     int32_t vertexOffset;
 
     uint32_t shaderIndex;
+
+    alignas(16) glm::vec3 aabbMin;
+    alignas(16) glm::vec3 aabbMax;
+};
+static_assert(sizeof(MeshMetadata) == 48);
+
+struct InstanceDesc {
+    MeshIndex meshIndex;
+    MaterialIndex materialIndex;
+
+    bool isDynamic;
 };
 
 struct Instance {
-    glm::mat4 modelMatrix;
-
-    glm::vec3 aabbMin;
-    glm::vec3 aabbMax;
-
-    MaterialIndex materialIndex;
     MeshIndex meshIndex;
+    MaterialIndex materialIndex;
 
-    uint32_t _pad;
+    vk::Bool32 isDynamic;
+
+    InstanceIndex frameDataIndex;
+};
+
+struct InstanceFrameData {
+    glm::mat4 modelMat;
 };
 
 struct ShaderPass {
@@ -106,11 +125,16 @@ public:
     Renderer();
 
     ShaderIndex AddShader(const dvk::GraphicsPipeline::Ref& pipeline, const std::string& name = "");
-    TextureIndex AddTexture(const dvk::TextureView::Ref& textureView, const dvk::Sampler::Ref& sampler);
+    void SetShaderPipeline(uint32_t frameIndex, ShaderIndex shader, const dvk::GraphicsPipeline::Ref& pipeline);
+    TextureIndex AddTexture(const dvk::TextureView::Ref& textureView);
+    SamplerIndex AddSampler(const dvk::Sampler::Ref& sampler);
     MaterialIndex AddMaterial(uint32_t frameIndex, ShaderIndex shader, const void* src, uint64_t size);
     MeshIndex AddMesh(uint32_t frameIndex, ShaderIndex shader, const MeshDesc& meshDesc);
-    InstanceIndex AddInstance(uint32_t frameIndex, const Instance& instance);
+    std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> AddInstance(uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc);
 
+    // void SetDynamicFrameData(DynamicFrameDataIndex dynamicFrameDataIndex, const InstanceFrameData& frameData);
+
+    void Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
     void Draw(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
     [[nodiscard]] dvk::BindSetLayout::Ref GetStaticBindSetLayout() const;
@@ -126,18 +150,24 @@ private:
     dvk::BindSetLayout::Ref _shaderPassBindSetLayout;
     dvk::BindSetLayout::Ref _texturesBindSetLayout;
 
+    int32_t _vertexCount;
+    uint32_t _indexCount;
     GrowingBuffer _vertexArray;
     GrowingBuffer _indexArray;
-    dvk::BindSet::Ref _texturesBindSet;
+    dvk::BindSet::Ref _texturesSamplersBindSet;
 
     std::array<bool, FRAMES_IN_FLIGHT> _needRebindMeshMetadata{};
     std::array<bool, FRAMES_IN_FLIGHT> _needRebindInstances{};
+    std::array<bool, FRAMES_IN_FLIGHT> _needRebindStaticInstanceFrameData{};
     uint32_t _numMeshes = 0;
-    uint32_t _numInstances = 0;
+    uint32_t _numStaticInstances = 0;
+    uint32_t _numDynamicInstances = 0;
     GrowingBuffer _meshMetadata;
     GrowingBuffer _instances;
+    GrowingBuffer _staticInstanceFrameData;
     dvk::BindSet::Refs<FRAMES_IN_FLIGHT> _staticBindSet;
 
+    dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _dynamicInstanceFrameData;
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _meshToInstanceIndexOffsets;
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _meshInstanceCounts;
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _visibleInstanceIndices;
@@ -152,20 +182,26 @@ private:
     dvk::ComputePipeline::Ref _computePass2Pipeline;
 
     // Refs
+    std::vector<InstanceFrameData> _dynamicInstanceFrameDataStaging;
+    std::vector<std::weak_ptr<InstanceComponent>> _dynamicInstanceIndexToComponent;
+
     bool _needRecomputeInstanceIndexOffsets = true;
-    std::vector<uint32_t> _meshIndexToMaxInstanceCount;
+    std::vector<uint32_t> _meshToMaxInstanceCount;
     std::vector<uint32_t> _meshToInstanceIndexOffsetsStaging;
 
     bool _needRecomputeCommandIndexOffsets = true;
     std::vector<uint32_t> _shaderToMaxMeshCount;
     std::vector<uint32_t> _shaderToCommandIndexOffsetsStaging;
 
-    std::vector<std::pair<dvk::TextureView::Ref, dvk::Sampler::Ref>> _textures;
+    std::vector<dvk::TextureView::Ref> _textures;
+    std::vector<dvk::Sampler::Ref> _samplers;
     std::vector<ShaderPass> _shaderPasses;
 
     void _setNeedRebindMeshMetadata();
     void _setNeedRebindInstances();
+    void _setNeedRebindStaticInstanceFrameData();
 
+    bool _maybeResizeDynamicInstanceFrameData(uint32_t frameIndex, dvk::Binder& binder);
     bool _maybeResizeMeshToInstanceIndexOffsets(uint32_t frameIndex, dvk::Binder& binder);
     bool _maybeResizeMeshInstanceCounts(uint32_t frameIndex, dvk::Binder& binder);
     bool _maybeResizeVisibleInstanceIndices(uint32_t frameIndex, dvk::Binder& binder);
@@ -175,4 +211,6 @@ private:
 
     void _computeMeshToInstanceIndexOffsets(uint32_t frameIndex);
     void _computeShaderToCommandIndexOffsets(uint32_t frameIndex);
+
+    void _writeDynamicInstanceFrameData(uint32_t frameIndex);
 };

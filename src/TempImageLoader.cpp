@@ -68,17 +68,43 @@ dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::I
     return texture;
 }
 
+Data::Image LoadImage(unsigned char* raw, int size, int channels, Data::Image::ColorSpace colorSpace) {
+    Data::Image image;
+
+    stbi_set_flip_vertically_on_load(true);
+    stbi_uc* data = stbi_load_from_memory(
+        raw,
+        size,
+        &image.width,
+        &image.height,
+        &image.channels,
+        channels
+    );
+    stbi_set_flip_vertically_on_load(false);
+    if (data == nullptr) throw std::runtime_error("stbi failed to decode image!");
+    if (channels != 0) image.channels = channels;
+
+    image.data = std::shared_ptr<uint8_t>(data, [](void* ptr) { stbi_image_free(ptr); });
+    image.bytesPerSubpixel = sizeof(uint8_t);
+    image.size = image.width * image.height * image.channels * image.bytesPerSubpixel;
+    image.compressionMode = Data::Image::CompressionMode::Uncompressed;
+    image.colorSpace = colorSpace;
+
+    return image;
+}
+
 Data::Image LoadImage(const std::string& path, int channels, Data::Image::ColorSpace colorSpace) {
     Data::Image image;
 
-    stbi_uc* data;
-    data = stbi_load(
+    stbi_set_flip_vertically_on_load(true);
+    stbi_uc* data = stbi_load(
         path.c_str(),
         &image.width,
         &image.height,
         &image.channels,
         channels
     );
+    stbi_set_flip_vertically_on_load(false);
     if (data == nullptr) throw std::runtime_error("stbi failed to decode image!");
     if (channels != 0) image.channels = channels;
 
@@ -94,9 +120,8 @@ Data::Image LoadImage(const std::string& path, int channels, Data::Image::ColorS
 Data::Image LoadHDRI(const std::string& path) {
     Data::Image image;
 
-    float* data;
     stbi_set_flip_vertically_on_load(true);
-    data = stbi_loadf(
+    float* data = stbi_loadf(
         path.c_str(),
         &image.width,
         &image.height,

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Node.hpp"
+
 #include <dvk/dvk.hpp>
 
 #include <string>
@@ -11,7 +13,7 @@ public:
 private:
     Gltf(std::string copyright, std::string generator);
 
-    // Node _root;
+    Node::Ref _root;
     std::string _copyright;
     std::string _generator;
 };

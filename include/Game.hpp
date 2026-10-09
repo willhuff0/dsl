@@ -8,7 +8,7 @@
 #include "PostProcessing.hpp"
 #include "Terrain.hpp"
 #include "Skybox.hpp"
-// #include "MeshRenderer.hpp"
+#include "Model.hpp"
 
 #include <memory>
 #include <chrono>
@@ -43,5 +43,5 @@ private:
     std::unique_ptr<Skybox> skybox = nullptr;
     std::unique_ptr<Terrain> terrain = nullptr;
 
-    // std::unique_ptr<MeshRenderer> meshRenderer = nullptr;
+    std::unique_ptr<Model> model = nullptr;
 };

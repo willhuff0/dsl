@@ -10,8 +10,10 @@ class Renderer;
 constexpr uint32_t FRAMES_IN_FLIGHT = 2;
 
 struct alignas(16) GlobalUniforms {
-    glm::mat4 viewProjMatrix;
-    glm::vec4 viewPosition;
+    glm::mat4 viewProjMat;
+    glm::mat4 projMat;
+    glm::mat4 viewMat;
+    glm::vec3 viewPos;
     uint32_t radianceMipMapCount;
 };
 

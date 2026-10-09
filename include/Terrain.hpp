@@ -1,6 +1,6 @@
 #pragma once
 
-#include "HotReload.hpp"
+#include "ShaderHotReload.hpp"
 
 #include <dvk/dvk.hpp>
 

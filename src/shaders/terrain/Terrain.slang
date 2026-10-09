@@ -32,7 +32,7 @@ VertexOutput vs_main(VertexInput input) {
     }
 
     float gridSize = METERS_PER_TEXEL * exp2(snapLod);
-    float2 snappedViewPos = floor(u_global.viewPosition.xz / gridSize) * gridSize;
+    float2 snappedViewPos = floor(u_global.viewPos.xz / gridSize) * gridSize;
 
     float2 worldXZ = snappedViewPos + input.positionXZ;
     int2 worldTexelXZ = int2(floor(worldXZ / METERS_PER_TEXEL + float2(HEIGHTMAP_SIZE / 2.0)));
@@ -133,14 +133,14 @@ float4 fs_main(VertexOutput input, float3 baryCoord: SV_Barycentrics) : SV_Targe
 
     float2 normalUv = (input.worldPosition.xz / METERS_PER_TEXEL) / float(HEIGHTMAP_SIZE) + 0.5;
     float3 N = normalize(u_normalMap.Sample(u_sampler, normalUv).xyz);
-    float3 V = normalize(u_global.viewPosition.xyz - input.worldPosition.xyz);
+    float3 V = normalize(u_global.viewPos - input.worldPosition.xyz);
     float3 R = reflect(-V, N);
 
     float3 Lo = float3(0.0);
 
 // Directional Light
     {
-        float3 L = normalize(float3(0.5, 1.0, 0.5));
+        float3 L = normalize(float3(0.5, 0.5, 0.5));
         float3 H = normalize(V + L);
 
         float3 radiance = float3(1.0, 0.95, 0.9) * 1.5;
@@ -177,7 +177,7 @@ float4 fs_main(VertexOutput input, float3 baryCoord: SV_Barycentrics) : SV_Targe
 
         float3 prefilteredColor = u_radianceMap.SampleLevel(u_environmentSampler, R, roughness * float(u_global.radianceMipMapCount)).rgb;
         float2 envBrdf = u_brdfLut.Sample(u_environmentSampler, float2(max(dot(N, V), 0.0), roughness)).rg;
-        float3 specular = prefilteredColor * (F * envBrdf.x + envBrdf.y);
+        float3 specular = prefilteredColor * (F0 * envBrdf.x + envBrdf.y);
 
         ambient = (kD * diffuse + specular) * ao * AMBIENT_INTENSITY;
     }

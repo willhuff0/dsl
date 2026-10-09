@@ -1,18 +1,51 @@
 #pragma once
 
-#include <slgl/common/Math.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <memory>
-#include <unordered_set>
-#include <unordered_map>
+#include <vector>
 #include <string>
-#include <functional>
+
+class Component {
+    friend class Node;
+public:
+    using Ref = std::shared_ptr<Component>;
+
+    virtual ~Component() = default;
+
+    [[nodiscard]] std::shared_ptr<Node> GetNode() const;
+    [[nodiscard]] bool IsEnabled() const;
+
+    void SetEnabled(bool isEnabled);
+
+protected:
+    virtual void _onEnterScene() { }
+    virtual void _onExitScene() { }
+    virtual void _onEnable() { }
+    virtual void _onDisable() { }
+
+private:
+    std::weak_ptr<Node> _node;
+    bool _isEnabled = true;
+};
 
 class Node : public std::enable_shared_from_this<Node> {
 public:
-    static std::shared_ptr<Node> Create(std::shared_ptr<Node> parent = nullptr);
+    using Ref = std::shared_ptr<Node>;
 
-    //#region Transform
+    Node(std::string name, glm::vec3 pos, glm::quat rot, glm::vec3 scale);
+
+    static Node::Ref Create(const std::string& name,
+        glm::vec3 pos = glm::zero<glm::vec3>(),
+        glm::quat rot = glm::identity<glm::quat>(),
+        glm::vec3 scale = glm::one<glm::vec3>());
+
+    [[nodiscard]] const std::string& GetName() const;
+    void SetName(std::string name);
+
+    [[nodiscard]] const Node::Ref& GetParent() const;
+
     [[nodiscard]] glm::vec3 GetLPos() const;
     [[nodiscard]] glm::quat GetLRot() const;
     [[nodiscard]] glm::vec3 GetLAnglesRad() const;
@@ -37,56 +70,62 @@ public:
     [[nodiscard]] glm::vec3 GetWAnglesDeg();
     [[nodiscard]] glm::vec3 GetWScale();
 
-    void SetWPos(glm::vec3 wp);
-    void SetWRot(glm::quat wr);
-    void SetWAnglesRad(glm::vec3 war);
+    void SetWPos(glm::vec3 value);
+    void SetWRot(glm::quat value);
+    void SetWAnglesRad(glm::vec3 value);
     void SetWAnglesDeg(glm::vec3 wad);
-    void SetWScale(glm::vec3 ws);
+    void SetWScale(glm::vec3 value);
 
     [[nodiscard]] glm::mat4 GetMatrix() const;
     [[nodiscard]] glm::mat4 GetMatrix();
-    void SetMatrix(glm::mat4 matrix);
 
-    [[nodiscard]] bool IsDirty() const;
-    void SetDirty();
-    void RecalculateWorld();
+    [[nodiscard]] glm::vec3 GetForwardVector() const;
+    [[nodiscard]] glm::vec3 GetRightVector() const;
+    [[nodiscard]] glm::vec3 GetUpVector() const;
 
-    void AddChangeCallback(std::function<void(const std::shared_ptr<Node>&)> onChange);
-    //#endregion
-
-    //#region Children
-    [[nodiscard]] const std::unordered_set<std::shared_ptr<Node>>& GetChildren() const;
-    [[nodiscard]] size_t GetChildCount() const;
-
-    std::shared_ptr<Node> CreateChild();
-    void AttachChild(const std::shared_ptr<Node>& target);
-
-    void DetachChild(const std::shared_ptr<Node>& target);
-    void DetachAllChildren();
-    //#endregion
+    [[nodiscard]] glm::vec3 GetForwardVector();
+    [[nodiscard]] glm::vec3 GetRightVector();
+    [[nodiscard]] glm::vec3 GetUpVector();
 
     [[nodiscard]] bool IsEnabled() const;
-    void SetIsEnabled(bool newIsEnabled);
+    [[nodiscard]] bool IsFullyEnabled() const;
+    void SetEnabled(bool isEnabled);
+
+    [[nodiscard]] const std::vector<Node::Ref>& GetChildren() const;
+    void AddChild(Node::Ref child);
+    void RemoveChild(const Node::Ref& child);
+    void RemoveAllChildren();
+
+    [[nodiscard]] const std::vector<Component::Ref>& GetComponents() const;
+    void AddComponent(Component::Ref component);
+    void RemoveComponent(const Component::Ref& component);
+
+    void EnterScene();
+    void ExitScene();
 
 private:
-    explicit Node(std::shared_ptr<Node> parent);
+    bool _isEnabled = true;
+    std::string _name;
+    Node::Ref _parent;
+    // TODO: use linked hash set
+    std::vector<Node::Ref> _children;
+    std::vector<Component::Ref> _components;
 
-    bool isEnabled = true;
+    glm::vec3 _lPos;
+    glm::quat _lRot;
+    glm::vec3 _lScale;
 
-    std::string label;
+    bool _wDirty = false;
+    glm::vec3 _wPos = glm::zero<glm::vec3>();
+    glm::quat _wRot = glm::identity<glm::quat>();
+    glm::vec3 _wScale = glm::one<glm::vec3>();
 
-    std::shared_ptr<Node> parent;
-    std::unordered_set<std::shared_ptr<Node>> children;
+    void _markWDirty();
+    void _updateWorldFromParent();
 
-    glm::vec3 lPos = glm::zero<glm::vec3>();
-    glm::quat lRot = glm::zero<glm::vec3>();
-    glm::vec3 lScale = glm::zero<glm::vec3>();
+    void _enterScene(bool callOnEnable);
+    void _exitScene(bool callOnDisable);
 
-    glm::vec3 wPos = glm::zero<glm::vec3>();
-    glm::quat wRot = glm::zero<glm::vec3>();
-    glm::vec3 wScale = glm::zero<glm::vec3>();
-
-    bool dirty = false;
-
-    std::vector<std::function<void(const std::shared_ptr<Node>&)>> changeCallbacks;
+    void _onEnable();
+    void _onDisable();
 };
