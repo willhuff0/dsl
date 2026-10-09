@@ -25,8 +25,10 @@ private:
     float pitch = 0.0f;
     float yaw = -90.0f;
 
-    float speed = 1.0f;
+    float speed = 5.0f;
 
     glm::mat4 projMat;
     glm::mat4 viewMat;
+
+    void tick();
 };

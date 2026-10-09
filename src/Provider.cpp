@@ -7,6 +7,7 @@
 #include <optional>
 
 static Platform* platformBackend;
+static dvk::Instance* graphicsInstance;
 static dvk::Device* graphicsBackend;
 
 static vk::Format graphicsSurfaceFormat;
@@ -19,6 +20,7 @@ static dvk::BindSetLayout::Ref globalBindSetLayout;
 static dvk::Buffer::Refs<FRAMES_IN_FLIGHT> globalUniformsBuffer;
 static std::array<dvk::BindSet::Ref, FRAMES_IN_FLIGHT> globalBindSet;
 static dvk::Sampler::Ref environmentSampler;
+static dvk::TextureView::Ref environmentView;
 static dvk::TextureView::Ref irradianceView;
 static dvk::TextureView::Ref radianceView;
 static dvk::TextureView::Ref brdfLutView;
@@ -45,8 +47,9 @@ static vk::SampleCountFlagBits getMaxUsableSampleCount() {
     return vk::SampleCountFlagBits::e1;
 }
 
-void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder* commandEncoder, vk::Format surfaceFormat) {
+void SetupProvider(Platform* platform, dvk::Instance* instance, dvk::Device* device, dvk::CommandEncoder* commandEncoder, vk::Format surfaceFormat) {
     platformBackend = platform;
+    graphicsInstance = instance;
     graphicsBackend = device;
     graphicsCommandEncoder = commandEncoder;
     graphicsSurfaceFormat = surfaceFormat;
@@ -74,15 +77,7 @@ void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder*
         .AddEntry(2)
             .SetType(vk::DescriptorType::eSampledImage)
             .SetStage(vk::ShaderStageFlagBits::eFragment)
-            .FinishEntry()
-        .AddEntry(3)
-            .SetType(vk::DescriptorType::eSampledImage)
-            .SetStage(vk::ShaderStageFlagBits::eFragment)
-            .FinishEntry()
-        .AddEntry(4)
-            .SetType(vk::DescriptorType::eSampledImage)
-            .SetStage(vk::ShaderStageFlagBits::eFragment)
-            .FinishEntry()
+            .FinishEntry(4)
         .Build();
 
     globalUniformsBuffer = dvk::Buffer::Create(GetDevice())
@@ -126,6 +121,7 @@ void FreeProvider() {
     debugTextureBindSet = nullptr;
     debugTextureView = nullptr;
 
+    environmentView = nullptr;
     irradianceView = nullptr;
     radianceView = nullptr;
     brdfLutView = nullptr;
@@ -140,9 +136,15 @@ void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex) {
     globalUniformsBuffer[frameIndex]->CopyToAndFlush(uniforms);
 }
 
-void SetSkybox(const dvk::Texture::Ref& irradianceMap,
+void SetSkybox(const dvk::Texture::Ref& environmentMap,
+               const dvk::Texture::Ref& irradianceMap,
                const dvk::Texture::Ref& radianceMap,
                const dvk::Texture::Ref& brdfLut) {
+    environmentView = dvk::TextureView::Create(GetDevice(), environmentMap)
+        .SetLabel("Global Environment CubeMap")
+        .SetType(vk::ImageViewType::eCube)
+        .Build();
+
     irradianceView = dvk::TextureView::Create(GetDevice(), irradianceMap)
         .SetLabel("Global Irradiance CubeMap")
         .SetType(vk::ImageViewType::eCube)
@@ -168,12 +170,15 @@ void SetSkybox(const dvk::Texture::Ref& irradianceMap,
                 .SetSampler(environmentSampler)
                 .FinishSampler()
             .BindTexture(2)
-                .SetTextureView(irradianceView)
+                .SetTextureView(environmentView)
                 .FinishTexture()
             .BindTexture(3)
-                .SetTextureView(radianceView)
+                .SetTextureView(irradianceView)
                 .FinishTexture()
             .BindTexture(4)
+                .SetTextureView(radianceView)
+                .FinishTexture()
+            .BindTexture(5)
                 .SetTextureView(brdfLutView)
                 .FinishTexture()
             .Update(globalBindSet[i]);
@@ -187,6 +192,7 @@ void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, uint32_
 dvk::BindSetLayout::Ref GetGlobalBindSetLayout() { return globalBindSetLayout; }
 
 Platform* GetPlatform() { return platformBackend; }
+dvk::Instance& GetInstance() { return *graphicsInstance; }
 dvk::Device& GetDevice() { return *graphicsBackend; }
 dvk::CommandEncoder& GetCommandEncoder() { return *graphicsCommandEncoder; }
 dvk::BindPool::Ref& GetBindPool() { return bindPool; }

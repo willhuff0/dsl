@@ -1,4 +1,5 @@
 #include "../Globals.slang"
+#include "../Fog.slang"
 
 [[vk::binding(0, 0)]] ConstantBuffer<GlobalUniforms> u_global;
 
@@ -54,9 +55,10 @@ VertexOutput vs_main(VertexInput input) {
 [[vk::constant_id(3)]] const float AMBIENT_INTENSITY = 1.0;
 
 [[vk::binding(1, 0)]] SamplerState u_environmentSampler;
-[[vk::binding(2, 0)]] TextureCube<float4> u_irradianceMap;
-[[vk::binding(3, 0)]] TextureCube<float4> u_radianceMap;
-[[vk::binding(4, 0)]] Texture2D<float2> u_brdfLut;
+[[vk::binding(2, 0)]] TextureCube<float4> u_environmentMap;
+[[vk::binding(3, 0)]] TextureCube<float4> u_irradianceMap;
+[[vk::binding(4, 0)]] TextureCube<float4> u_radianceMap;
+[[vk::binding(5, 0)]] Texture2D<float2> u_brdfLut;
 
 [[vk::binding(2, 1)]] SamplerState u_sampler;
 [[vk::binding(3, 1)]] Texture2D<float4> u_albedoTexture;
@@ -183,6 +185,14 @@ float4 fs_main(VertexOutput input, float3 baryCoord: SV_Barycentrics) : SV_Targe
     }
 
     float3 color = ambient + Lo;
+
+    color = ApplyDistanceFog(
+        color,
+        input.worldPosition.xyz,
+        u_global.viewPos,
+        u_environmentSampler,
+        u_environmentMap
+    );
 
     if (ENABLE_WIREFRAME) {
         float wireframe = 1.0 - WireFrame(baryCoord, 0.1, 1.0);

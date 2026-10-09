@@ -17,7 +17,7 @@ int main() {
     dvk::Presenter presenter(device, surface, vk::Extent2D { window->GetWidth(), window->GetHeight() });
     dvk::CommandEncoder commandEncoder(device);
 
-    SetupProvider(&platform, &device, &commandEncoder, presenter.GetFormat());
+    SetupProvider(&platform, &instance, &device, &commandEncoder, presenter.GetFormat());
     {
         Game game(&platform, window, surface, presenter);
         while (!window->ShouldClose()) {

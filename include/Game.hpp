@@ -9,6 +9,7 @@
 #include "Terrain.hpp"
 #include "Skybox.hpp"
 #include "Model.hpp"
+#include "Gui.hpp"
 
 #include <memory>
 #include <chrono>
@@ -39,6 +40,7 @@ private:
     dvk::TextureView::Ref multisampleTextureView;
 
     FlyCamera flyCamera;
+    std::unique_ptr<Gui> gui = nullptr;
     std::unique_ptr<PostProcessing> postProcessing = nullptr;
     std::unique_ptr<Skybox> skybox = nullptr;
     std::unique_ptr<Terrain> terrain = nullptr;

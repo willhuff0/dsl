@@ -4,6 +4,8 @@
 #include <utils/Paths.hpp>
 #include <TempImageLoader.hpp>
 
+#include <imgui.h>
+
 #include <utility>
 #include <filesystem>
 
@@ -15,6 +17,7 @@ Game::Game(Platform* platform, Window::Ref window, dvk::Surface& surface, dvk::P
       surface(surface),
       presenter(presenter),
       flyCamera(static_cast<GLFWwindow*>(this->window->GetNativeHandle()), glm::vec3(0.0f, 0.5f, 10.0f)) {
+    gui = std::make_unique<Gui>(static_cast<GLFWwindow*>(this->window->GetNativeHandle()), presenter);
     postProcessing = std::make_unique<PostProcessing>();
     skybox = std::make_unique<Skybox>(Skybox::FromEquirectangularMap(LoadHDRI(SKYBOX_HDRI_PATH)));
     terrain = std::make_unique<Terrain>();
@@ -24,7 +27,7 @@ Game::Game(Platform* platform, Window::Ref window, dvk::Surface& surface, dvk::P
     model->GetRoot()->SetLScale(glm::vec3(50.0f, 50.0f, 50.0f));
     model->GetRoot()->SetLPos(glm::vec3(0.0f, -50.0f, 0.0f));
 
-    SetSkybox(skybox->GetIrradianceMap(), skybox->GetRadianceMap(), skybox->GetBrdfLut());
+    SetSkybox(skybox->GetEnvironmentMap(), skybox->GetIrradianceMap(), skybox->GetRadianceMap(), skybox->GetBrdfLut());
 
     GetDevice().GetQueue().waitIdle();
     regenerateRenderTextures();
@@ -49,6 +52,8 @@ void Game::MainLoop() {
     auto [frameIndex, commandBuffer] = GetCommandEncoder().GetNextFrame();
 
     HotReload::Attempt(frameIndex, GetDevice());
+    gui->BeginFrame();
+    gui->DrawFpsOverlay();
 
     // Render
     GlobalUniforms globalUniforms {
@@ -60,9 +65,7 @@ void Game::MainLoop() {
     };
     SetGlobalUniforms(&globalUniforms, frameIndex);
 
-    // Stream terrain heightmap around the camera before entering the render pass.
     terrain->Update(flyCamera.GetPos(), commandBuffer);
-
     GetRenderer().Update(commandBuffer, frameIndex);
 
     // Main Render Pass
@@ -102,14 +105,15 @@ void Game::MainLoop() {
     commandBuffer.SetScissor({0, 0}, presenter.GetExtent());
 
     terrain->Draw(window->getHandle(), commandBuffer, frameIndex);
-    skybox->Draw(flyCamera.GetProjMat(), flyCamera.GetViewMat(), commandBuffer, frameIndex);
     GetRenderer().Draw(commandBuffer, frameIndex);
+    skybox->Draw(commandBuffer);
 
     commandBuffer.EndRendering();
 
     // Post Processing Render Pass
     presenter.PrepareImageForRendering(commandBuffer, imageIndex);
     postProcessing->PostProcessingRenderPass(commandBuffer, surfaceImageView, presenter.GetExtent());
+    gui->GuiRenderPass(commandBuffer, surfaceImageView, presenter.GetExtent());
     presenter.PrepareImageForPresentation(commandBuffer, imageIndex);
 
     GetCommandEncoder().SubmitFrame(frameIndex, onRenderFinishedSemaphore);
@@ -127,6 +131,7 @@ void Game::resizeSurface() {
     GetDevice().GetQueue().waitIdle();
 
     presenter.Resize(surface, { window->GetWidth(), window->GetHeight() });
+    gui->Resize(presenter);
 
     regenerateRenderTextures();
 }

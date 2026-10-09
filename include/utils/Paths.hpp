@@ -17,7 +17,7 @@
 #define SB_IRRADIANCE_SHADER_PATH SHADER_RES_BASEPATH "/skybox/Irradiance.spv"
 #define SB_RADIANCE_SHADER_PATH SHADER_RES_BASEPATH "/skybox/Radiance.spv"
 #define SB_ENV_BRDF_LUT_GENERATOR_SHADER_PATH SHADER_RES_BASEPATH "/skybox/EnvBrdfLutGenerator.spv"
-#define SB_SKYBOX_SHADER_PATH SHADER_RES_BASEPATH "/skybox/Skybox.spv"
+#define SB_SKYBOX_SHADER_PATH "/skybox/Skybox"
 
 #define PP_FULLSCREEN_VERTEX_SHADER_PATH SHADER_RES_BASEPATH "/pp/FullscreenVertex.spv"
 #define PP_SPLIT_BRIGHTNESS_SHADER_PATH SHADER_RES_BASEPATH "/pp/SplitBrightness.spv"
@@ -40,3 +40,5 @@
 #define RENDERER_COMPUTE_PASS2_SHADER_PATH "/renderer/Pass2_CompactCommands"
 
 #define MODEL_OPAQUE_SHADER_PATH "/model/Opaque"
+
+#define GUI_FONT_PATH RESOURCE_BASEPATH "/fonts/RobotoMono.ttf"

@@ -50,6 +50,7 @@ target_sources(dsl
         src/components/InstanceComponent.cpp
         src/Renderer.cpp
         src/Model.cpp
+        src/Gui.cpp
     PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
@@ -78,6 +79,7 @@ target_sources(dsl
         include/components/InstanceComponent.hpp
         include/Renderer.hpp
         include/Model.hpp
+        include/Gui.hpp
 )
 
 target_include_directories(dsl

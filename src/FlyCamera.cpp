@@ -8,6 +8,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <imgui.h>
+
 #define SENSITIVITY 45.0f
 #define SCROLL_SENSITIVITY 1.0f
 
@@ -20,14 +22,16 @@ static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset) {
 
 static bool flyCamFocused = false;
 static void focusCallback(GLFWwindow* window, int focused) {
-    if (focused == GLFW_FALSE) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse || io.WantCaptureKeyboard || focused == GLFW_FALSE) {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         flyCamFocused = false;
     }
 }
 
 static void mouseCallback(GLFWwindow* window, int button, int action, int mods) {
-    if (glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_FALSE) return;
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse || io.WantCaptureKeyboard || glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_FALSE) return;
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     flyCamFocused = true;
 
@@ -60,6 +64,8 @@ FlyCamera::FlyCamera(GLFWwindow* window, glm::vec3 startPos) : window(window), p
     lastTime = glfwGetTime();
 
     glfwSetScrollCallback(window, scrollCallback);
+
+    tick();
 }
 
 void FlyCamera::Tick() {
@@ -79,6 +85,14 @@ void FlyCamera::Tick() {
         return;
     }
 
+    tick();
+}
+
+glm::vec3 FlyCamera::GetPos() const { return pos; }
+glm::mat4 FlyCamera::GetProjMat() const { return projMat; }
+glm::mat4 FlyCamera::GetViewMat() const { return viewMat; }
+
+void FlyCamera::tick() {
     double time = glfwGetTime();
     double dt = time - lastTime;
     lastTime = time;
@@ -147,11 +161,6 @@ void FlyCamera::Tick() {
     float nearClip = 0.1f;
     float farClip = 5000.0f;
     projMat = glm::perspective(FOV, aspectRatio, nearClip, farClip);
-    // projMat[1][1] *= -1;
 
     scrollDelta = 0.0;
 }
-
-glm::vec3 FlyCamera::GetPos() const { return pos; }
-glm::mat4 FlyCamera::GetProjMat() const { return projMat; }
-glm::mat4 FlyCamera::GetViewMat() const { return viewMat; }

@@ -1,5 +1,6 @@
 #include "../Globals.slang"
 #include "../renderer/RendererStructs.slang"
+#include "../Fog.slang"
 
 static const uint32_t NULL_INDEX = 0xFFFFFFFF;
 static const float PI = 3.14159265359;
@@ -19,9 +20,10 @@ static const float AMBIENT_INTENSITY = 1.0;
 
 [[vk::binding(0, 2)]] ConstantBuffer<GlobalUniforms> Globals;
 [[vk::binding(1, 2)]] SamplerState EnvironmentSampler;
-[[vk::binding(2, 2)]] TextureCube<float4> IrradianceMap;
-[[vk::binding(3, 2)]] TextureCube<float4> RadianceMap;
-[[vk::binding(4, 2)]] Texture2D<float2> BrdfLut;
+[[vk::binding(2, 2)]] TextureCube<float4> EnvironmentMap;
+[[vk::binding(3, 2)]] TextureCube<float4> IrradianceMap;
+[[vk::binding(4, 2)]] TextureCube<float4> RadianceMap;
+[[vk::binding(5, 2)]] Texture2D<float2> BrdfLut;
 
 [[vk::binding(0, 3)]] Texture2D Textures[];
 [[vk::binding(1, 3)]] SamplerState Samplers[];
@@ -251,7 +253,13 @@ float4 FragmentMain(
     float shadow = 0.0; // calculateShadow(input.position, N, L);
     float3 color = ambient * ao + Lo * (1.0 - shadow) + emissive;
 
-    // color = float3(specularIBL);
+    color = ApplyDistanceFog(
+        color,
+        input.position,
+        Globals.viewPos,
+        EnvironmentSampler,
+        EnvironmentMap
+    );
 
     return float4(color, baseColor.a);
 }

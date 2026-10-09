@@ -166,8 +166,7 @@ CubeMapConverter::CubeMapConverter() {
 
     sampler = dvk::Sampler::Create(GetDevice())
         .SetLabel("CubeMapConverter")
-        .SetAddressMode(vk::SamplerAddressMode::eClampToBorder)
-        .SetBorderColor(vk::BorderColor::eFloatOpaqueBlack)
+        .SetAddressMode(vk::SamplerAddressMode::eClampToEdge)
         .Build();
 
     glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
@@ -511,79 +510,27 @@ Skybox::Skybox(CubeMap environmentMap, CubeMap irradianceMap, CubeMap radianceMa
       irradianceMap(std::move(irradianceMap)),
       radianceMap(std::move(radianceMap)),
       brdfLut(std::move(brdfLut)) {
-    cubeMapView = this->environmentMap.CreateCubeView("Skybox Environment CubeMap View");
-
-    bindSetLayout = dvk::BindSetLayout::Create(GetDevice())
-        .SetLabel("Skybox")
-        .AddEntry(0)
-            .SetType(vk::DescriptorType::eUniformBuffer)
-            .SetStage(vk::ShaderStageFlagBits::eVertex)
-            .FinishEntry()
-        .AddEntry(1)
-            .SetType(vk::DescriptorType::eSampledImage)
-            .SetStage(vk::ShaderStageFlagBits::eFragment)
-            .FinishEntry()
-        .AddEntry(2)
-            .SetType(vk::DescriptorType::eSampler)
-            .SetStage(vk::ShaderStageFlagBits::eFragment)
-            .FinishEntry()
-        .Build();
-
-    uniformBuffer = dvk::Buffer::Create(GetDevice())
-        .SetLabel("Skybox Uniform Buffer")
-        .SetUsage(vk::BufferUsageFlagBits::eUniformBuffer)
-        .SetSize(sizeof(SkyboxUniforms))
-        .EnableCopyToAndFlush()
-        .Build<FRAMES_IN_FLIGHT>();
-
-    bindSet = dvk::BindSet::Create<FRAMES_IN_FLIGHT>(GetDevice(), GetBindPool(), bindSetLayout, "Skybox");
-
-    sampler = dvk::Sampler::Create(GetDevice())
-        .SetLabel("Skybox")
-        .SetAddressMode(vk::SamplerAddressMode::eClampToBorder)
-        .SetBorderColor(vk::BorderColor::eFloatOpaqueBlack)
-        .Build();
-
-    for (size_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        dvk::Binder()
-            .BindBuffer(0)
-                .SetBufferType(vk::DescriptorType::eUniformBuffer)
-                .SetBuffer(uniformBuffer[i])
-                .SetRange(0, sizeof(SkyboxUniforms))
-                .FinishBuffer()
-            .BindTexture(1)
-                .SetTextureView(cubeMapView)
-                .FinishTexture()
-            .BindSampler(2)
-                .SetSampler(sampler)
-                .FinishSampler()
-            .Update(bindSet[i]);
-    }
-
     auto pipelineLayout = dvk::PipelineLayout::Create(GetDevice())
-        .SetLabel("Skybox")
-        .AddBindSetLayout(bindSetLayout)
+        .SetLabel("Skybox Layout")
+        .AddBindSetLayout(GetGlobalBindSetLayout())
         .Build();
-
-    auto shader = dvk::Shader::LoadFile(GetDevice(), SB_SKYBOX_SHADER_PATH, "Skybox");
-
-    graphicsPipeline = dvk::GraphicsPipeline::Create(GetDevice(), pipelineLayout)
-        .SetLabel("Skybox")
-        .SetVertexInput(getCubeVertexBindingDescriptions(), getCubeVertexAttributeDescriptions())
-        .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "vs_main").FinishStage()
-        .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "fs_main").FinishStage()
-        .SetSingleAttachment(GetRenderTextureFormat())
-        .EnableDepth(GetDepthFormat())
-        .SetDepth()
-            // Matches the Dart reference (`depthFunc(LEQUAL)` + `depthMask(false)`):
-            // the skybox sits on the far plane, so it must pass against a cleared
-            // depth of 1.0 and must not overwrite scene depth.
-            .EnableDepthTest(true)
-            .EnableDepthWrite(false)
-            .SetDepthCompare(vk::CompareOp::eLessOrEqual)
-            .FinishDepth()
-        .EnableMultisample(GetMultisampleCount())
-        .Build();
+    graphicsPipelineWatcher = ShaderHotReload::CreateAndWatch(SB_SKYBOX_SHADER_PATH, [this, pipelineLayout](const auto& path) {
+        auto shader = dvk::Shader::LoadFile(GetDevice(), path, "Skybox Module");
+        graphicsPipeline = dvk::GraphicsPipeline::Create(GetDevice(), pipelineLayout)
+            .SetLabel("Skybox Pipeline")
+            .SetVertexInput(getCubeVertexBindingDescriptions(), getCubeVertexAttributeDescriptions())
+            .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "vs_main").FinishStage()
+            .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "fs_main").FinishStage()
+            .SetSingleAttachment(GetRenderTextureFormat())
+            .EnableDepth(GetDepthFormat())
+            .SetDepth()
+                .EnableDepthTest(true)
+                .EnableDepthWrite(false)
+                .SetDepthCompare(vk::CompareOp::eLessOrEqual)
+                .FinishDepth()
+            .EnableMultisample(GetMultisampleCount())
+            .Build();
+    });
 
     positionBuffer = dvk::Buffer::Create(GetDevice())
         .SetLabel("Skybox Position Buffer")
@@ -619,19 +566,14 @@ Skybox Skybox::FromEquirectangularMap(const Data::Image& image) {
     return FromEquirectangularMap(texture);
 }
 
-void Skybox::Draw(glm::mat4 projMatrix, glm::mat4 viewMatrix, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
-    SkyboxUniforms uniforms {
-        .projMatrix = projMatrix,
-        .viewMatrix = viewMatrix,
-    };
-    uniformBuffer[frameIndex]->CopyToAndFlush(&uniforms);
-
+void Skybox::Draw(dvk::CommandBuffer& commandBuffer) {
     commandBuffer.SetGraphicsPipeline(graphicsPipeline);
     commandBuffer.SetVertexBuffer(0, positionBuffer);
-    commandBuffer.SetBindSet(0, bindSet[frameIndex]);
+    BindGlobals(commandBuffer, 0);
     commandBuffer.Draw(36);
 }
 
+dvk::Texture::Ref Skybox::GetEnvironmentMap() const { return environmentMap.GetTexture(); }
 dvk::Texture::Ref Skybox::GetIrradianceMap() const { return irradianceMap.GetTexture(); }
 dvk::Texture::Ref Skybox::GetRadianceMap() const { return radianceMap.GetTexture(); }
 dvk::Texture::Ref Skybox::GetBrdfLut() const { return brdfLut; }

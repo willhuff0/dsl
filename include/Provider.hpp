@@ -17,11 +17,12 @@ struct alignas(16) GlobalUniforms {
     uint32_t radianceMipMapCount;
 };
 
-void SetupProvider(Platform* platform, dvk::Device* device, dvk::CommandEncoder* commandEncoder, vk::Format surfaceFormat);
+void SetupProvider(Platform* platform, dvk::Instance* instance, dvk::Device* device, dvk::CommandEncoder* commandEncoder, vk::Format surfaceFormat);
 void FreeProvider();
 
 void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex);
-void SetSkybox(const dvk::Texture::Ref& irradianceMap,
+void SetSkybox(const dvk::Texture::Ref& environmentMap,
+               const dvk::Texture::Ref& irradianceMap,
                const dvk::Texture::Ref& radianceMap,
                const dvk::Texture::Ref& brdfLuts);
 
@@ -30,6 +31,7 @@ void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, uint32_
 dvk::BindSetLayout::Ref GetGlobalBindSetLayout();
 
 Platform* GetPlatform();
+dvk::Instance& GetInstance();
 dvk::Device& GetDevice();
 dvk::CommandEncoder& GetCommandEncoder();
 dvk::BindPool::Ref& GetBindPool();

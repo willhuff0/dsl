@@ -2,11 +2,12 @@
 
 #include <DataImage.hpp>
 
+#include "Provider.hpp"
+#include "ShaderHotReload.hpp"
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <dvk/dvk.hpp>
-
-#include "Provider.hpp"
 
 struct CubeMapCaptureUniforms {
     glm::mat4 viewProjMatrix;
@@ -96,8 +97,9 @@ public:
     static Skybox FromEquirectangularMap(const dvk::Texture::Ref& equirectangularMap);
     static Skybox FromEquirectangularMap(const Data::Image& image);
 
-    void Draw(glm::mat4 projMatrix, glm::mat4 viewMatrix, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
+    void Draw(dvk::CommandBuffer& commandBuffer);
 
+    [[nodiscard]] dvk::Texture::Ref GetEnvironmentMap() const;
     [[nodiscard]] dvk::Texture::Ref GetIrradianceMap() const;
     [[nodiscard]] dvk::Texture::Ref GetRadianceMap() const;
     [[nodiscard]] dvk::Texture::Ref GetBrdfLut() const;
@@ -108,11 +110,7 @@ private:
     CubeMap radianceMap;
     dvk::Texture::Ref brdfLut;
 
+    Watcher graphicsPipelineWatcher;
     dvk::GraphicsPipeline::Ref graphicsPipeline;
-    dvk::BindSetLayout::Ref bindSetLayout;
-    dvk::Buffer::Refs<FRAMES_IN_FLIGHT> uniformBuffer;
-    dvk::BindSet::Refs<FRAMES_IN_FLIGHT> bindSet;
-    dvk::Sampler::Ref sampler;
-    dvk::TextureView::Ref cubeMapView;
     dvk::Buffer::Ref positionBuffer;
 };

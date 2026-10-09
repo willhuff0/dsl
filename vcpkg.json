@@ -19,6 +19,7 @@
       "name": "imgui",
       "version>=": "1.91.9",
       "features": [
+        "glfw-binding",
         "vulkan-binding"
       ]
     }
