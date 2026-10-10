@@ -5,9 +5,9 @@
 
 static constexpr uint64_t BUFFER_GROW_FACTOR = 2;
 static constexpr uint32_t MAX_SHADER_PASSES = 64;
-static constexpr uint32_t MAX_TEXTURES = 128;
+static constexpr uint32_t MAX_TEXTURES = 1024 * 64;
 static constexpr uint32_t MAX_SAMPLERS = 128;
-static constexpr uint32_t NUM_STORAGE_BUFFERS = 4 + (7 * FRAMES_IN_FLIGHT) + MAX_SHADER_PASSES;
+static constexpr uint32_t NUM_STORAGE_BUFFERS = 5 + (7 * FRAMES_IN_FLIGHT) + MAX_SHADER_PASSES;
 
 void ShaderPass::SetNeedRebindMaterials() {
     for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
@@ -207,12 +207,24 @@ Renderer::Renderer()
             .SetStage(computePass2Shader, "CompactCommands").FinishStage()
             .Build();
     });
+
+    _defaultSampler = dvk::Sampler::Create(GetDevice())
+        .SetLabel("[Mesh Renderer] Default Sampler")
+        .SetAddressMode(vk::SamplerAddressMode::eRepeat)
+        .Build();
+    dvk::Binder()
+        .BindSampler(1)
+            .SetArrayTarget(0, 1)
+            .SetSampler(_defaultSampler)
+            .FinishSampler()
+        .Update(_texturesSamplersBindSet);
 }
 
-ShaderIndex Renderer::AddShader(const dvk::GraphicsPipeline::Ref& pipeline, const std::string& name) {
+ShaderIndex Renderer::AddShader(const dvk::GraphicsPipeline::Ref& pipeline, bool isTransparent, const std::string& name) {
     ShaderIndex index = _shaderPasses.size();
     auto& shaderPass = _shaderPasses.emplace_back(ShaderPass {
         .pipeline = pipeline,
+        .isTransparent = isTransparent,
         .materials = GrowingBuffer(
             "[Mesh Renderer] '" + name + "' Materials",
             vk::BufferUsageFlagBits::eStorageBuffer,
@@ -224,6 +236,12 @@ ShaderIndex Renderer::AddShader(const dvk::GraphicsPipeline::Ref& pipeline, cons
             "[Mesh Renderer] '" + name + "'"),
     });
     shaderPass.SetNeedRebindMaterials();
+
+    if (isTransparent) {
+        _numTransparentShaderPasses++;
+    } else {
+        _numOpaqueShaderPasses++;
+    }
 
     _shaderToMaxMeshCount.emplace_back();
     _shaderToCommandIndexOffsetsStaging.emplace_back();
@@ -349,7 +367,7 @@ void Renderer::Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
     if (_indexArray.GetBuffer() == nullptr) _indexArray.Recreate(commandBuffer, frameIndex);
 
     for (auto& shaderPass : _shaderPasses) {
-        if (!shaderPass.needRebindMaterials[frameIndex]) continue;
+        if (!shaderPass.needRebindMaterials[frameIndex] || shaderPass.materials.GetBuffer() == nullptr) continue;
 
         dvk::Binder()
             .BindBuffer(0)
@@ -466,21 +484,50 @@ void Renderer::Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
         .FinishBarriers();
 }
 
-void Renderer::Draw(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
-    if (!_shaderPasses.empty()) {
-        commandBuffer.SetGraphicsPipeline(_shaderPasses[0].pipeline);
+void Renderer::DrawOpaque(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+    if (_numOpaqueShaderPasses == 0) return;
 
-        commandBuffer.SetVertexBuffer(0, _vertexArray.GetBuffer());
-        commandBuffer.SetIndexBuffer(_indexArray.GetBuffer());
+    commandBuffer.SetGraphicsPipeline(_shaderPasses[0].pipeline);
 
-        commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
-        commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
-        BindGlobals(commandBuffer, frameIndex, 2);
-        commandBuffer.SetBindSet(3, _texturesSamplersBindSet);
-    }
+    commandBuffer.SetVertexBuffer(0, _vertexArray.GetBuffer());
+    commandBuffer.SetIndexBuffer(_indexArray.GetBuffer());
+
+    commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
+    commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
+    BindGlobals(commandBuffer, frameIndex, 2);
+    commandBuffer.SetBindSet(3, _texturesSamplersBindSet);
 
     for (uint32_t i = 0; i < _shaderPasses.size(); i++) {
         const auto& shaderPass = _shaderPasses[i];
+        if (shaderPass.isTransparent || shaderPass.materials.GetBuffer() == nullptr) continue;
+
+        commandBuffer.SetGraphicsPipeline(shaderPass.pipeline);
+        commandBuffer.SetBindSet(4, shaderPass.bindSet[frameIndex]);
+        commandBuffer.DrawIndexedIndirectCount(
+            _compactedCommands[frameIndex],
+            _drawCounts[frameIndex],
+            _shaderToMaxMeshCount[i],
+            _shaderToCommandIndexOffsetsStaging[i] * sizeof(VkDrawIndexedIndirectCommand),
+            i * sizeof(uint32_t));
+    }
+}
+
+void Renderer::DrawTransparent(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+    if (_numTransparentShaderPasses == 0) return;
+
+    commandBuffer.SetGraphicsPipeline(_shaderPasses[0].pipeline);
+
+    commandBuffer.SetVertexBuffer(0, _vertexArray.GetBuffer());
+    commandBuffer.SetIndexBuffer(_indexArray.GetBuffer());
+
+    commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
+    commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
+    BindGlobals(commandBuffer, frameIndex, 2);
+    commandBuffer.SetBindSet(3, _texturesSamplersBindSet);
+
+    for (uint32_t i = 0; i < _shaderPasses.size(); i++) {
+        const auto& shaderPass = _shaderPasses[i];
+        if (!shaderPass.isTransparent || shaderPass.materials.GetBuffer() == nullptr) continue;
 
         commandBuffer.SetGraphicsPipeline(shaderPass.pipeline);
         commandBuffer.SetBindSet(4, shaderPass.bindSet[frameIndex]);

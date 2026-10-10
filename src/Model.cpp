@@ -41,8 +41,16 @@ namespace {
             return inst;
         }
 
-        ShaderIndex GetOpaque() {
+        [[nodiscard]] ShaderIndex GetOpaque() const {
             return _opaque;
+        }
+
+        [[nodiscard]] ShaderIndex GetOpaqueDoubleSided() const {
+            return _opaqueDoubleSided;
+        }
+
+        [[nodiscard]] ShaderIndex GetTransparent() const {
+            return _transparent;
         }
 
         void Free() {
@@ -60,31 +68,86 @@ namespace {
                 .AddBindSetLayout(GetRenderer().GetShaderPassBindSetLayout())
                 .Build();
 
-            _opaqueWatcher = ShaderHotReload::CreateAndWatch(0, MODEL_OPAQUE_SHADER_PATH, [this, layout](uint32_t frameIndex, const auto& path) {
+            _opaqueWatcher = ShaderHotReload::CreateAndWatch(0, MODEL_SHADER_PATH, [this, layout](uint32_t frameIndex, const auto& path) {
                 auto shader = dvk::Shader::LoadFile(GetDevice(), path, "[Model] Opaque");
-                auto pipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
+                auto opaquePipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
                     .SetLabel("[Model] Opaque")
                     .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
                     .SetRasterizer()
                         .SetCullMode(vk::CullModeFlagBits::eBack)
-                        .SetFrontFace(vk::FrontFace::eCounterClockwise)
                         .FinishRasterizer()
                     .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
-                    .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain").FinishStage()
+                    .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
+                        .SetConstant(0, false)
+                        .SetConstant(0, false)
+                        .FinishStage()
                     .SetSingleAttachment(GetRenderTextureFormat())
                     .EnableDepth(GetDepthFormat())
                     .EnableMultisample(GetMultisampleCount())
                     .Build();
+                auto opaqueDoubleSidedPipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
+                    .SetLabel("[Model] Opaque Double-Sided")
+                    .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
+                    .SetRasterizer()
+                        .SetCullMode(vk::CullModeFlagBits::eNone)
+                        .FinishRasterizer()
+                    .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
+                    .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
+                        .SetConstant(0, true)
+                        .SetConstant(1, false)
+                        .FinishStage()
+                    .SetSingleAttachment(GetRenderTextureFormat())
+                    .EnableDepth(GetDepthFormat())
+                    .EnableMultisample(GetMultisampleCount())
+                    .Build();
+                auto transparentPipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
+                    .SetLabel("[Model] Transparent")
+                    .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
+                    .SetRasterizer()
+                        .SetCullMode(vk::CullModeFlagBits::eNone)
+                        .FinishRasterizer()
+                    .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
+                    .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
+                        .SetConstant(0, true)
+                        .SetConstant(1, true)
+                        .FinishStage()
+                    .AddAttachment()
+                        .SetFormat(GetRenderTextureFormat())
+                        .EnableBlending()
+                        .SetColorBlend(vk::BlendOp::eAdd, vk::BlendFactor::eSrcAlpha, vk::BlendFactor::eOneMinusSrcAlpha)
+                        .SetAlphaBlend(vk::BlendOp::eAdd, vk::BlendFactor::eOne, vk::BlendFactor::eZero)
+                        .FinishAttachment()
+                    .SetDepth()
+                        .SetFormat(GetDepthFormat())
+                        .EnableDepthTest()
+                        .FinishDepth()
+                    .EnableMultisample(GetMultisampleCount())
+                    .Build();
+
                 if (_opaque == NULL_INDEX) {
-                    _opaque = GetRenderer().AddShader(pipeline, "[Model] Opaque");
+                    _opaque = GetRenderer().AddShader(opaquePipeline, false, "[Model] Opaque");
                 } else {
-                    GetRenderer().SetShaderPipeline(frameIndex, _opaque, pipeline);
+                    GetRenderer().SetShaderPipeline(frameIndex, _opaque, opaquePipeline);
+                }
+
+                if (_opaqueDoubleSided == NULL_INDEX) {
+                    _opaqueDoubleSided = GetRenderer().AddShader(opaqueDoubleSidedPipeline, false, "[Model] Opaque Double-Sided");
+                } else {
+                    GetRenderer().SetShaderPipeline(frameIndex, _opaqueDoubleSided, opaqueDoubleSidedPipeline);
+                }
+
+                if (_transparent == NULL_INDEX) {
+                    _transparent = GetRenderer().AddShader(transparentPipeline, true, "[Model] Transparent");
+                } else {
+                    GetRenderer().SetShaderPipeline(frameIndex, _transparent, transparentPipeline);
                 }
             });
         }
 
         Watcher _opaqueWatcher;
         ShaderIndex _opaque = NULL_INDEX;
+        ShaderIndex _opaqueDoubleSided = NULL_INDEX;
+        ShaderIndex _transparent = NULL_INDEX;
     };
 
     struct ModelLoadingContext {
@@ -94,7 +157,7 @@ namespace {
         const std::filesystem::path& dir;
         std::unordered_map<AiTextureIndex, TextureIndex>& embeddedTextures;
         std::unordered_map<std::string, TextureIndex>& externalTextures;
-        std::unordered_map<AiMaterialIndex, MaterialIndex>& materials;
+        std::unordered_map<AiMaterialIndex, std::pair<MaterialIndex, ShaderIndex>>& materials;
         std::unordered_map<AiMeshIndex, MeshIndex>& meshes;
     };
 
@@ -254,7 +317,7 @@ static TextureIndex loadMaterialTexture(
     }
 }
 
-static MaterialIndex loadMaterial(
+static std::pair<MaterialIndex, ShaderIndex> loadMaterial(
     ModelLoadingContext& context,
     AiMaterialIndex aiMaterialIndex
 ) {
@@ -278,24 +341,28 @@ static MaterialIndex loadMaterial(
     material->Get(AI_MATKEY_TEXBLEND(aiTextureType_AMBIENT_OCCLUSION, 0), occlusionStrength);
     material->Get(AI_MATKEY_COLOR_EMISSIVE, emissiveFactor);
 
+    bool isDoubleSided = false;
+    material->Get(AI_MATKEY_TWOSIDED, isDoubleSided);
+
     float alphaCutoff = 0.5f;
     material->Get(AI_MATKEY_GLTF_ALPHACUTOFF, alphaCutoff);
 
+    bool isTransparent = false;
     aiString aiAlphaMode;
     material->Get(AI_MATKEY_GLTF_ALPHAMODE, aiAlphaMode);
     std::string alphaMode(aiAlphaMode.C_Str());
     if (alphaMode == "OPAQUE") {
         alphaCutoff = 2.0f;
     } else if (alphaMode == "BLEND") {
-        // TODO: use transparent shader pass
+        isTransparent = true;
     }
 
     auto baseColor = loadMaterialTexture(context, "[Model] Base Color " + std::to_string(aiMaterialIndex), aiTextureType_BASE_COLOR, material, 0, Data::Image::ColorSpace::SRGB);
     auto metallic = loadMaterialTexture(context, "[Model] Metallic " + std::to_string(aiMaterialIndex), aiTextureType_METALNESS, material, 0, Data::Image::ColorSpace::Linear);
     auto roughness = loadMaterialTexture(context, "[Model] Roughness " + std::to_string(aiMaterialIndex), aiTextureType_DIFFUSE_ROUGHNESS, material, 0, Data::Image::ColorSpace::Linear);
     auto normal = loadMaterialTexture(context, "[Model] Normal " + std::to_string(aiMaterialIndex), aiTextureType_NORMALS, material, 0, Data::Image::ColorSpace::Linear);
-    auto occlusion = loadMaterialTexture(context, "[Model] Occlusion " + std::to_string(aiMaterialIndex), aiTextureType_AMBIENT_OCCLUSION, material, 0, Data::Image::ColorSpace::Linear);
-    auto emissive = loadMaterialTexture(context, "[Model] Emissive " + std::to_string(aiMaterialIndex), aiTextureType_EMISSION_COLOR, material, 0, Data::Image::ColorSpace::SRGB);
+    auto occlusion = loadMaterialTexture(context, "[Model] Occlusion " + std::to_string(aiMaterialIndex), aiTextureType_LIGHTMAP, material, 0, Data::Image::ColorSpace::Linear);
+    auto emissive = loadMaterialTexture(context, "[Model] Emissive " + std::to_string(aiMaterialIndex), aiTextureType_EMISSIVE, material, 0, Data::Image::ColorSpace::SRGB);
 
     int baseColorUvIndex = 0;
     int metallicUvIndex = 0;
@@ -307,7 +374,7 @@ static MaterialIndex loadMaterial(
     material->Get(AI_MATKEY_UVWSRC(aiTextureType_METALNESS, 0), metallicUvIndex);
     material->Get(AI_MATKEY_UVWSRC(aiTextureType_DIFFUSE_ROUGHNESS, 0), roughnessUvIndex);
     material->Get(AI_MATKEY_UVWSRC(aiTextureType_NORMALS, 0), normalUvIndex);
-    material->Get(AI_MATKEY_UVWSRC(aiTextureType_AMBIENT_OCCLUSION, 0), occlusionUvIndex);
+    material->Get(AI_MATKEY_UVWSRC(aiTextureType_AMBIENT, 0), occlusionUvIndex);
     material->Get(AI_MATKEY_UVWSRC(aiTextureType_EMISSIVE, 0), emissiveUvIndex);
 
     Material materialDesc {
@@ -331,9 +398,12 @@ static MaterialIndex loadMaterial(
         .emissiveFactor = glm::vec3(emissiveFactor.r, emissiveFactor.g, emissiveFactor.b),
         .alphaCutoff = alphaCutoff,
     };
-    MaterialIndex rendererMaterialIndex = GetRenderer().AddMaterial(context.commandBuffer, context.frameIndex, ModelShaders::Get().GetOpaque(), &materialDesc, sizeof(Material));
-    context.materials.emplace(aiMaterialIndex, rendererMaterialIndex);
-    return rendererMaterialIndex;
+
+    ShaderIndex shader = isTransparent ? ModelShaders::Get().GetTransparent() : isDoubleSided ? ModelShaders::Get().GetOpaqueDoubleSided() : ModelShaders::Get().GetOpaque();
+    MaterialIndex rendererMaterialIndex = GetRenderer().AddMaterial(context.commandBuffer, context.frameIndex, shader, &materialDesc, sizeof(Material));
+    auto cachePair = std::make_pair(rendererMaterialIndex, shader);
+    context.materials.emplace(aiMaterialIndex, cachePair);
+    return cachePair;
 }
 
 static std::pair<MeshIndex, MaterialIndex> loadMesh(
@@ -341,7 +411,7 @@ static std::pair<MeshIndex, MaterialIndex> loadMesh(
     AiMeshIndex aiMeshIndex
 ) {
     const aiMesh* mesh = context.scene->mMeshes[aiMeshIndex];
-    auto rendererMaterialIndex = loadMaterial(context, mesh->mMaterialIndex);
+    auto [rendererMaterialIndex, rendererShaderIndex] = loadMaterial(context, mesh->mMaterialIndex);
 
     {
         auto meshIter = context.meshes.find(aiMeshIndex);
@@ -365,13 +435,17 @@ static std::pair<MeshIndex, MaterialIndex> loadMesh(
         vertex.position = glm::vec3(mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z);
         vertex.normal = glm::vec3(mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z);
 
-        glm::vec3 tangent = glm::vec3(mesh->mTangents[i].x, mesh->mTangents[i].y, mesh->mTangents[i].z);
-        glm::vec3 bitangent = glm::vec3(mesh->mBitangents[i].x, mesh->mBitangents[i].y, mesh->mBitangents[i].z);
+        if (mesh->mTangents != nullptr && mesh->mBitangents != nullptr) {
+            glm::vec3 tangent = glm::vec3(mesh->mTangents[i].x, mesh->mTangents[i].y, mesh->mTangents[i].z);
+            glm::vec3 bitangent = glm::vec3(mesh->mBitangents[i].x, mesh->mBitangents[i].y, mesh->mBitangents[i].z);
 
-        glm::vec3 expectedBitangent = glm::cross(vertex.normal, tangent);
-        float handedness = glm::dot(expectedBitangent, bitangent) < 0.0f ? -1.0f : 1.0f;
+            glm::vec3 expectedBitangent = glm::cross(vertex.normal, tangent);
+            float handedness = glm::dot(expectedBitangent, bitangent) < 0.0f ? -1.0f : 1.0f;
 
-        vertex.tangent = glm::vec4(tangent, handedness);
+            vertex.tangent = glm::vec4(tangent, handedness);
+        } else {
+            vertex.tangent = glm::zero<glm::vec4>();
+        }
 
         if (mesh->mTextureCoords[0]) {
             vertex.uv0 = glm::vec2(mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y);
@@ -387,7 +461,7 @@ static std::pair<MeshIndex, MaterialIndex> loadMesh(
         desc.vertices.emplace_back(vertex);
     }
 
-    MeshIndex rendererMeshIndex = GetRenderer().AddMesh(context.commandBuffer, context.frameIndex, ModelShaders::Get().GetOpaque(), desc);
+    MeshIndex rendererMeshIndex = GetRenderer().AddMesh(context.commandBuffer, context.frameIndex, rendererShaderIndex, desc);
     context.meshes.emplace(aiMeshIndex, rendererMeshIndex);
     return std::make_pair(rendererMeshIndex, rendererMaterialIndex);
 }
@@ -437,7 +511,7 @@ Model Model::LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, co
 
     std::unordered_map<AiTextureIndex, TextureIndex> embeddedTextures;
     std::unordered_map<std::string, TextureIndex> externalTextures;
-    std::unordered_map<AiMaterialIndex, MaterialIndex> materials;
+    std::unordered_map<AiMaterialIndex, std::pair<MaterialIndex, ShaderIndex>> materials;
     std::unordered_map<AiMeshIndex, MeshIndex> meshes;
 
     embeddedTextures.reserve(scene->mNumTextures);
@@ -455,7 +529,26 @@ Model Model::LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, co
         .meshes = meshes,
     };
 
-    return Model(loadNode(context, scene->mRootNode));
+    auto result = Node::Create("ROOT");
+
+    constexpr int width = 3;
+    constexpr int height = 3;
+    constexpr int depth = 3;
+
+    constexpr float spacing = 10.0f;
+
+    for (int x = 0; x < width; x++) {
+        for (int y = 0; y < height; y++) {
+            for (int z = 0; z < depth; z++) {
+                auto child = loadNode(context, scene->mRootNode);
+                child->SetLScale(glm::vec3(4.0f, 4.0f, 4.0f));
+                child->SetLPos(glm::vec3(x * spacing, -10.0f + y * spacing, -10.0f + -z * spacing));
+                result->AddChild(child);
+            }
+        }
+    }
+
+    return Model(result);
 }
 
 void Model::FreeShaders() {

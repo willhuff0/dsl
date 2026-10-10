@@ -1,6 +1,6 @@
 struct Instance {
-    uint32_t materialIndex;
     uint32_t meshIndex;
+    uint32_t materialIndex;
 
     bool isDynamic;
 

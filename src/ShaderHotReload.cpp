@@ -6,8 +6,10 @@
 #include <filesystem>
 
 Watcher ShaderHotReload::CreateAndWatch(uint32_t frameIndex, const std::string& relativePath, const ShaderHotReloadCallback& callback) {
-    std::string sourcePath = SHADER_SRC_BASEPATH + relativePath + ".slang";
     std::string compiledPath = SHADER_RES_BASEPATH + relativePath + ".spv";
+
+#if !defined(NDEBUG)
+    std::string sourcePath = SHADER_SRC_BASEPATH + relativePath + ".slang";
 
     auto compileThenCallback = [sourcePath, compiledPath, callback](uint32_t frameIndex) {
         std::cout << "Compiling Shader '" + sourcePath + "'!" << std::endl;
@@ -31,6 +33,10 @@ Watcher ShaderHotReload::CreateAndWatch(uint32_t frameIndex, const std::string& 
     }
 
     return HotReload::Watch(sourcePath, compileThenCallback);
+#else
+    callback(frameIndex, compiledPath);
+    return {};
+#endif
 }
 
 Watcher ShaderHotReload::CreateAndWatch(const std::string& relativePath, const ShaderHotReloadCallbackNoFrameIndex& callback) {

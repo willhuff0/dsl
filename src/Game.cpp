@@ -22,10 +22,11 @@ Game::Game(Platform* platform, Window::Ref window, dvk::Surface& surface, dvk::P
     skybox = std::make_unique<Skybox>(Skybox::FromEquirectangularMap(LoadHDRI(SKYBOX_HDRI_PATH)));
     terrain = std::make_unique<Terrain>();
     GetCommandEncoder().ExecuteAndWait([&](dvk::CommandBuffer& commandBuffer) {
-        model = std::make_unique<Model>(Model::LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/models/FlightHelmet.glb"));
+        // models.emplace_back(std::make_unique<Model>(Model::LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/models/AlphaBlendModeTest.glb")));
+        models.emplace_back(std::make_unique<Model>(Model::LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/models/DamagedHelmet.glb")));
     });
-    model->GetRoot()->SetLScale(glm::vec3(50.0f, 50.0f, 50.0f));
-    model->GetRoot()->SetLPos(glm::vec3(0.0f, -50.0f, 0.0f));
+    // models[0]->GetRoot()->SetLScale(glm::vec3(5.0f, 5.0f, 5.0f));
+    // models[0]->GetRoot()->SetLPos(glm::vec3(0.0f, -5.0f, -100.0f));
 
     SetSkybox(skybox->GetEnvironmentMap(), skybox->GetIrradianceMap(), skybox->GetRadianceMap(), skybox->GetBrdfLut());
 
@@ -104,9 +105,10 @@ void Game::MainLoop() {
         {static_cast<float>(presenter.GetExtent().width), -static_cast<float>(presenter.GetExtent().height)});
     commandBuffer.SetScissor({0, 0}, presenter.GetExtent());
 
+    GetRenderer().DrawOpaque(commandBuffer, frameIndex);
     terrain->Draw(window->getHandle(), commandBuffer, frameIndex);
-    GetRenderer().Draw(commandBuffer, frameIndex);
     skybox->Draw(commandBuffer);
+    GetRenderer().DrawTransparent(commandBuffer, frameIndex);
 
     commandBuffer.EndRendering();
 

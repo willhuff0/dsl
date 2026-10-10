@@ -1,4 +1,4 @@
-static const float DENSITY = 0.002;
+static const float DENSITY = 0.001;
 // static const float HEIGHT_FALLOFF = 0.01;
 // static const float BASE_HEIGHT = 0.0;
 
@@ -15,8 +15,9 @@ float3 ApplyDistanceFog(
 
     float3 rayDir = toFragment / distance;
 
-    float heightFactor = 1.0; //exp(-max(0.0, worldPos.y - BASE_HEIGHT) * HEIGHT_FALLOFF);
-    float fogFactor = 1.0 - exp(-distance * DENSITY * heightFactor);
+    float heightFactor = 1.0; // exp(-max(0.0, worldPos.y - BASE_HEIGHT) * HEIGHT_FALLOFF);
+    float exponent = distance * DENSITY * heightFactor;
+    float fogFactor = 1.0 - exp(-exponent * exponent);
     fogFactor = saturate(fogFactor);
 
     float3 environmentColor = environmentMap.Sample(environmentSampler, rayDir).rgb;

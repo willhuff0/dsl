@@ -45,5 +45,5 @@ private:
     std::unique_ptr<Skybox> skybox = nullptr;
     std::unique_ptr<Terrain> terrain = nullptr;
 
-    std::unique_ptr<Model> model = nullptr;
+    std::vector<std::unique_ptr<Model>> models;
 };

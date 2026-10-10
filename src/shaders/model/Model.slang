@@ -10,8 +10,6 @@ static const float3 DIRECTIONAL_LIGHT_RADIANCE = float3(1.0, 0.95, 0.9) * 1.5;
 
 static const float AMBIENT_INTENSITY = 1.0;
 
-[[vk::constant_id(1)]] const bool DOUBLE_SIDED = false;
-
 [[vk::binding(1, 0)]] StructuredBuffer<Instance> Instances;
 [[vk::binding(2, 0)]] StructuredBuffer<InstanceFrameData> StaticInstanceFrameDatas;
 
@@ -99,6 +97,9 @@ struct Material {
 };
 [[vk::binding(0, 4)]] StructuredBuffer<Material> Materials;
 
+[[vk::constant_id(0)]] const bool IS_DOUBLE_SIDED = false;
+[[vk::constant_id(1)]] const bool IS_TRANSPARENT = false;
+
 float3 F_Schlick(float cosTheta, float3 F0) {
     return F0 + (1.0 - F0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
@@ -153,11 +154,13 @@ float4 FragmentMain(
 
     float4 baseColor = material.baseColorFactor;
     if (material.baseColorTexture != NULL_INDEX) {
-        float4 baseColorTex = Textures[material.baseColorTexture].Sample(EnvironmentSampler, getUV(input, material.baseColorUvIndex));
+        float4 baseColorTex = Textures[material.baseColorTexture].Sample(Samplers[0], getUV(input, material.baseColorUvIndex));
         baseColor *= baseColorTex;
     }
 
-    if (material.alphaCutoff > 1.5f) {
+    if (IS_TRANSPARENT) {
+        
+    } else if (material.alphaCutoff > 1.5f) {
         // OPAQUE
         baseColor.a = 1.0;
     } else {
@@ -169,25 +172,25 @@ float4 FragmentMain(
 
     float metallic = material.metallicFactor;
     if (material.metallicTexture != NULL_INDEX) {
-        float4 metallicTex = Textures[material.metallicTexture].Sample(EnvironmentSampler, getUV(input, material.metallicUvIndex));
+        float4 metallicTex = Textures[material.metallicTexture].Sample(Samplers[0], getUV(input, material.metallicUvIndex));
         metallic *= metallicTex.b;
     }
 
     float roughness = material.roughnessFactor;
     if (material.roughnessTexture != NULL_INDEX) {
-        float4 roughnessTex = Textures[material.roughnessTexture].Sample(EnvironmentSampler, getUV(input, material.roughnessUvIndex));
+        float4 roughnessTex = Textures[material.roughnessTexture].Sample(Samplers[0], getUV(input, material.roughnessUvIndex));
         roughness *= roughnessTex.g;
     }
 
     float3 N = normalize(input.normal);
-    if (DOUBLE_SIDED && !isFrontFace) N = -N;
+    if (IS_DOUBLE_SIDED && !isFrontFace) N = -N;
     if (material.normalTexture != NULL_INDEX) {
         float2 normalUV = getUV(input, material.normalUvIndex);
         float3x3 tbn;
         if (length(input.tangent) > 0.001) {
             float3 t = normalize(input.tangent);
             float3 b = normalize(input.bitangent);
-            if (DOUBLE_SIDED && !isFrontFace) {
+            if (IS_DOUBLE_SIDED && !isFrontFace) {
                 t = -t;
                 b = -b;
             }
@@ -196,7 +199,7 @@ float4 FragmentMain(
             tbn = getTangentFrame(N, input.position, normalUV);
         }
 
-        float3 nTex = Textures[material.normalTexture].Sample(EnvironmentSampler, normalUV).rgb * 2.0 - 1.0;
+        float3 nTex = Textures[material.normalTexture].Sample(Samplers[0], normalUV).rgb * 2.0 - 1.0;
         nTex = normalize(float3(nTex.xy * material.normalScale, nTex.z));
         N = normalize(mul(nTex, tbn));
     }
@@ -240,13 +243,13 @@ float4 FragmentMain(
 
     float ao = 1.0;
     if (material.occlusionTexture != NULL_INDEX) {
-        ao = Textures[material.occlusionTexture].Sample(EnvironmentSampler, getUV(input, material.occlusionUvIndex)).r;
+        ao = Textures[material.occlusionTexture].Sample(Samplers[0], getUV(input, material.occlusionUvIndex)).r;
         ao = 1.0 + material.occlusionStrength * (ao - 1.0);
     }
 
     float3 emissive = material.emissiveFactor;
     if (material.emissiveTexture != NULL_INDEX) {
-        float3 eTex = Textures[material.emissiveTexture].Sample(EnvironmentSampler, getUV(input, material.emissiveUvIndex)).rgb;
+        float3 eTex = Textures[material.emissiveTexture].Sample(Samplers[0], getUV(input, material.emissiveUvIndex)).rgb;
         emissive *= eTex;
     }
 

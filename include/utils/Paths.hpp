@@ -3,12 +3,13 @@
 #if !defined(NDEBUG)
 #define SRC_BASEPATH "../src"
 #define RESOURCE_BASEPATH "../res"
+#else
+#define SRC_BASEPATH "./src"
+#define RESOURCE_BASEPATH "./res"
+#endif
 
 #define SHADER_SRC_BASEPATH SRC_BASEPATH "/shaders"
 #define SHADER_RES_BASEPATH RESOURCE_BASEPATH "/shaders"
-#else
-#define RESOURCE_BASEPATH "./res"
-#endif
 
 #define SKYBOX_HDRI_PATH RESOURCE_BASEPATH "/skybox.hdr"
 
@@ -39,6 +40,6 @@
 #define RENDERER_COMPUTE_PASS1_SHADER_PATH "/renderer/Pass1_CullInstances"
 #define RENDERER_COMPUTE_PASS2_SHADER_PATH "/renderer/Pass2_CompactCommands"
 
-#define MODEL_OPAQUE_SHADER_PATH "/model/Opaque"
+#define MODEL_SHADER_PATH "/model/Model"
 
 #define GUI_FONT_PATH RESOURCE_BASEPATH "/fonts/RobotoMono.ttf"

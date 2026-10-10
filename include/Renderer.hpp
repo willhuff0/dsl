@@ -110,6 +110,7 @@ struct InstanceFrameData {
 
 struct ShaderPass {
     dvk::GraphicsPipeline::Ref pipeline;
+    bool isTransparent;
 
     uint32_t numMaterials = 0;
     GrowingBuffer materials;
@@ -124,7 +125,7 @@ class Renderer {
 public:
     Renderer();
 
-    ShaderIndex AddShader(const dvk::GraphicsPipeline::Ref& pipeline, const std::string& name = "");
+    ShaderIndex AddShader(const dvk::GraphicsPipeline::Ref& pipeline, bool isTransparent = false, const std::string& name = "");
     void SetShaderPipeline(uint32_t frameIndex, ShaderIndex shader, const dvk::GraphicsPipeline::Ref& pipeline);
     TextureIndex AddTexture(const dvk::TextureView::Ref& textureView);
     SamplerIndex AddSampler(const dvk::Sampler::Ref& sampler);
@@ -133,7 +134,8 @@ public:
     std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> AddInstance(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc);
 
     void Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
-    void Draw(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
+    void DrawOpaque(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
+    void DrawTransparent(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
     [[nodiscard]] dvk::BindSetLayout::Ref GetStaticBindSetLayout() const;
     [[nodiscard]] dvk::BindSetLayout::Ref GetPerFrameBindSetLayout() const;
@@ -194,6 +196,10 @@ private:
     std::vector<dvk::TextureView::Ref> _textures;
     std::vector<dvk::Sampler::Ref> _samplers;
     std::vector<ShaderPass> _shaderPasses;
+    uint32_t _numOpaqueShaderPasses = 0;
+    uint32_t _numTransparentShaderPasses = 0;
+
+    dvk::Sampler::Ref _defaultSampler;
 
     void _setNeedRebindMeshMetadata();
     void _setNeedRebindInstances();
