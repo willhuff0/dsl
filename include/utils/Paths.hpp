@@ -1,6 +1,6 @@
 #pragma once
 
-#if !defined(NDEBUG)
+#if !defined(NDEBUG) || 1
 #define SRC_BASEPATH "../src"
 #define RESOURCE_BASEPATH "../res"
 #else
@@ -39,6 +39,7 @@
 
 #define RENDERER_COMPUTE_PASS1_SHADER_PATH "/renderer/Pass1_CullInstances"
 #define RENDERER_COMPUTE_PASS2_SHADER_PATH "/renderer/Pass2_CompactCommands"
+#define RENDERER_DEPTH_ONLY_SHADER_PATH "/renderer/DepthOnly"
 
 #define MODEL_SHADER_PATH "/model/Model"
 

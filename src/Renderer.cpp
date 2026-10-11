@@ -15,7 +15,7 @@ void ShaderPass::SetNeedRebindMaterials() {
     }
 }
 
-Renderer::Renderer()
+Renderer::Renderer(BindingProvider* cameraProvider)
     : _vertexArray(
         "[Mesh Renderer] Vertices",
         vk::BufferUsageFlagBits::eVertexBuffer,
@@ -191,7 +191,7 @@ Renderer::Renderer()
             .FinishPushConstantRange()
         .AddBindSetLayout(_staticBindSetLayout)
         .AddBindSetLayout(_perFrameBindSetLayout)
-        .AddBindSetLayout(GetGlobalBindSetLayout())
+        .AddBindSetLayout(cameraProvider->GetLayout())
         .Build();
     _computePass1Watcher = ShaderHotReload::CreateAndWatch(RENDERER_COMPUTE_PASS1_SHADER_PATH, [this, computePipelineLayout](const auto& path) {
         auto computePass1Shader = dvk::Shader::LoadFile(GetDevice(), path, "[Mesh Renderer] Compute Pass 1");
@@ -201,7 +201,7 @@ Renderer::Renderer()
             .Build();
     });
     _computePass2Watcher = ShaderHotReload::CreateAndWatch(RENDERER_COMPUTE_PASS2_SHADER_PATH, [this, computePipelineLayout](const auto& path) {
-    auto computePass2Shader = dvk::Shader::LoadFile(GetDevice(), path, "[Mesh Renderer] Compute Pass 2");
+        auto computePass2Shader = dvk::Shader::LoadFile(GetDevice(), path, "[Mesh Renderer] Compute Pass 2");
         this->_computePass2Pipeline = dvk::ComputePipeline::Create(GetDevice(), computePipelineLayout)
             .SetLabel("[Mesh Renderer] Compute Pass 2")
             .SetStage(computePass2Shader, "CompactCommands").FinishStage()
@@ -218,6 +218,25 @@ Renderer::Renderer()
             .SetSampler(_defaultSampler)
             .FinishSampler()
         .Update(_texturesSamplersBindSet);
+
+    auto depthOnlyPipelineLayout = dvk::PipelineLayout::Create(GetDevice())
+        .SetLabel("[Mesh Renderer] Depth Only Layout")
+        .AddBindSetLayout(_staticBindSetLayout)
+        .AddBindSetLayout(_perFrameBindSetLayout)
+        .AddBindSetLayout(cameraProvider->GetLayout())
+        .Build();
+    _depthOnlyPipelineWatcher = ShaderHotReload::CreateAndWatch(RENDERER_DEPTH_ONLY_SHADER_PATH, [this, depthOnlyPipelineLayout](const auto& path) {
+        auto depthOnlyShader = dvk::Shader::LoadFile(GetDevice(), path, "[Mesh Renderer] Depth Only Module");
+        _depthOnlyPipeline = dvk::GraphicsPipeline::Create(GetDevice(), depthOnlyPipelineLayout)
+            .SetLabel("[Mesh Renderer] Depth Only Pipeline")
+            .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
+            .SetRasterizer()
+                .SetCullMode(vk::CullModeFlagBits::eFront)
+                .FinishRasterizer()
+            .AddStage(vk::ShaderStageFlagBits::eVertex, depthOnlyShader, "VertexMain").FinishStage()
+            .EnableDepth(SHADOW_DEPTH_FORMAT)
+            .Build();
+    });
 }
 
 ShaderIndex Renderer::AddShader(const dvk::GraphicsPipeline::Ref& pipeline, bool isTransparent, const std::string& name) {
@@ -362,7 +381,7 @@ std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> Renderer::AddInst
     return std::make_pair(index, dynamicFrameDataIndex);
 }
 
-void Renderer::Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+void Renderer::UploadWorldState(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
     if (_vertexArray.GetBuffer() == nullptr) _vertexArray.Recreate(commandBuffer, frameIndex);
     if (_indexArray.GetBuffer() == nullptr) _indexArray.Recreate(commandBuffer, frameIndex);
 
@@ -429,6 +448,14 @@ void Renderer::Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
     _computeShaderToCommandIndexOffsets(frameIndex);
 
     _writeDynamicInstanceFrameData(frameIndex);
+}
+
+void Renderer::ComputeDrawCommands(
+    dvk::CommandBuffer& commandBuffer,
+    uint32_t frameIndex,
+    BindingProvider* cameraProvider
+) {
+    commandBuffer.BeginRegion("[Mesh Renderer] Compute Draw Commands", glm::vec4(0.6f, 0.4f, 0.4f, 1.0f));
 
     commandBuffer.FillBuffer(_meshInstanceCounts[frameIndex], 0);
     commandBuffer.FillBuffer(_drawCounts[frameIndex], 0);
@@ -444,7 +471,7 @@ void Renderer::Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
     commandBuffer.SetComputePipeline(_computePass1Pipeline);
     commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
     commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
-    BindGlobals(commandBuffer, frameIndex, 2);
+    cameraProvider->Bind(2, commandBuffer, frameIndex);
     commandBuffer.PushConstant(0, vk::ShaderStageFlagBits::eCompute, _numStaticInstances + _numDynamicInstances);
     commandBuffer.Dispatch((_numStaticInstances + _numDynamicInstances + 63) / 64);
 
@@ -482,9 +509,17 @@ void Renderer::Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
             .SetStages(vk::PipelineStageFlagBits2::eComputeShader, vk::PipelineStageFlagBits2::eDrawIndirect)
             .FinishBufferBarrier()
         .FinishBarriers();
+
+    commandBuffer.EndRegion();
 }
 
-void Renderer::DrawOpaque(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+void Renderer::DrawOpaque(
+    dvk::CommandBuffer& commandBuffer,
+    uint32_t frameIndex,
+    BindingProvider* cameraProvider,
+    BindingProvider* environmentProvider,
+    BindingProvider* directionalLightProvider
+) {
     if (_numOpaqueShaderPasses == 0) return;
 
     commandBuffer.SetGraphicsPipeline(_shaderPasses[0].pipeline);
@@ -494,15 +529,17 @@ void Renderer::DrawOpaque(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex
 
     commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
     commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
-    BindGlobals(commandBuffer, frameIndex, 2);
-    commandBuffer.SetBindSet(3, _texturesSamplersBindSet);
+    cameraProvider->Bind(2, commandBuffer, frameIndex);
+    environmentProvider->Bind(3, commandBuffer, frameIndex);
+    directionalLightProvider->Bind(4, commandBuffer, frameIndex);
+    commandBuffer.SetBindSet(5, _texturesSamplersBindSet);
 
     for (uint32_t i = 0; i < _shaderPasses.size(); i++) {
         const auto& shaderPass = _shaderPasses[i];
         if (shaderPass.isTransparent || shaderPass.materials.GetBuffer() == nullptr) continue;
 
         commandBuffer.SetGraphicsPipeline(shaderPass.pipeline);
-        commandBuffer.SetBindSet(4, shaderPass.bindSet[frameIndex]);
+        commandBuffer.SetBindSet(6, shaderPass.bindSet[frameIndex]);
         commandBuffer.DrawIndexedIndirectCount(
             _compactedCommands[frameIndex],
             _drawCounts[frameIndex],
@@ -512,7 +549,13 @@ void Renderer::DrawOpaque(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex
     }
 }
 
-void Renderer::DrawTransparent(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+void Renderer::DrawTransparent(
+    dvk::CommandBuffer& commandBuffer,
+    uint32_t frameIndex,
+    BindingProvider* cameraProvider,
+    BindingProvider* environmentProvider,
+    BindingProvider* directionalLightProvider
+) {
     if (_numTransparentShaderPasses == 0) return;
 
     commandBuffer.SetGraphicsPipeline(_shaderPasses[0].pipeline);
@@ -522,15 +565,46 @@ void Renderer::DrawTransparent(dvk::CommandBuffer& commandBuffer, uint32_t frame
 
     commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
     commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
-    BindGlobals(commandBuffer, frameIndex, 2);
-    commandBuffer.SetBindSet(3, _texturesSamplersBindSet);
+    cameraProvider->Bind(2, commandBuffer, frameIndex);
+    environmentProvider->Bind(3, commandBuffer, frameIndex);
+    directionalLightProvider->Bind(4, commandBuffer, frameIndex);
+    commandBuffer.SetBindSet(5, _texturesSamplersBindSet);
 
     for (uint32_t i = 0; i < _shaderPasses.size(); i++) {
         const auto& shaderPass = _shaderPasses[i];
         if (!shaderPass.isTransparent || shaderPass.materials.GetBuffer() == nullptr) continue;
 
         commandBuffer.SetGraphicsPipeline(shaderPass.pipeline);
-        commandBuffer.SetBindSet(4, shaderPass.bindSet[frameIndex]);
+        commandBuffer.SetBindSet(6, shaderPass.bindSet[frameIndex]);
+        commandBuffer.DrawIndexedIndirectCount(
+            _compactedCommands[frameIndex],
+            _drawCounts[frameIndex],
+            _shaderToMaxMeshCount[i],
+            _shaderToCommandIndexOffsetsStaging[i] * sizeof(VkDrawIndexedIndirectCommand),
+            i * sizeof(uint32_t));
+    }
+}
+
+void Renderer::DrawForShadows(
+    dvk::CommandBuffer& commandBuffer,
+    uint32_t frameIndex,
+    BindingProvider* cameraProvider
+) {
+    if (_numOpaqueShaderPasses == 0) return;
+
+    commandBuffer.SetGraphicsPipeline(_depthOnlyPipeline);
+
+    commandBuffer.SetVertexBuffer(0, _vertexArray.GetBuffer());
+    commandBuffer.SetIndexBuffer(_indexArray.GetBuffer());
+
+    commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
+    commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
+    cameraProvider->Bind(2, commandBuffer, frameIndex);
+
+    for (uint32_t i = 0; i < _shaderPasses.size(); i++) {
+        const auto& shaderPass = _shaderPasses[i];
+        if (shaderPass.isTransparent || shaderPass.materials.GetBuffer() == nullptr) continue;
+
         commandBuffer.DrawIndexedIndirectCount(
             _compactedCommands[frameIndex],
             _drawCounts[frameIndex],

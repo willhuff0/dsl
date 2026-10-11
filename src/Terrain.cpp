@@ -10,7 +10,7 @@
 constexpr float METERS_PER_TEXEL = 1.0f;
 constexpr uint32_t HEIGHTMAP_SIZE = 4096;
 constexpr float MATERIAL_TILING = 0.125f;
-constexpr float AMBIENT_INTENSITY = 2.0f;
+constexpr float AMBIENT_INTENSITY = 1.0f;
 constexpr float SNAPPING_INTERVAL = 1U << 5;
 
 struct Vertex {
@@ -33,7 +33,11 @@ struct Vertex {
     }; }
 };
 
-Terrain::Terrain() {
+Terrain::Terrain(
+    BindingProvider* cameraProvider,
+    BindingProvider* environmentProvider,
+    BindingProvider* directionalLightProvider
+) {
     for (uint32_t i = 0; i < 9; i++) {
         auto mesh = Mesh::LoadFile(TERRAIN_CLIPMAP_MESH_SHADER_PREFIX_PATH + std::to_string(i) + ".obj");
         vertexBuffer.push_back(dvk::Buffer::Create(GetDevice())
@@ -175,7 +179,9 @@ Terrain::Terrain() {
 
     graphicsPipelineLayout = dvk::PipelineLayout::Create(GetDevice())
         .SetLabel("Terrain Graphics")
-        .AddBindSetLayout(GetGlobalBindSetLayout())
+        .AddBindSetLayout(cameraProvider->GetLayout())
+        .AddBindSetLayout(environmentProvider->GetLayout())
+        .AddBindSetLayout(directionalLightProvider->GetLayout())
         .AddBindSetLayout(graphicsBindSetLayout)
         .AddPushConstantRange()
             .SetStage(vk::ShaderStageFlagBits::eVertex)
@@ -205,6 +211,9 @@ Terrain::Terrain() {
                 .SetConstant(2, MATERIAL_TILING)
                 .SetConstant(3, AMBIENT_INTENSITY)
                 .FinishStage()
+            .SetRasterizer()
+                .SetCullMode(vk::CullModeFlagBits::eBack)
+                .FinishRasterizer()
             .SetSingleAttachment(GetRenderTextureFormat())
             .EnableDepth(GetDepthFormat())
             .EnableMultisample(GetMultisampleCount())
@@ -331,7 +340,14 @@ void Terrain::Update(const glm::vec3& cameraPos, dvk::CommandBuffer& commandBuff
     heightmapOrigin = desiredOrigin;
 }
 
-void Terrain::Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+void Terrain::Draw(
+    GLFWwindow* window,
+    dvk::CommandBuffer& commandBuffer,
+    uint32_t frameIndex,
+    BindingProvider* cameraProvider,
+    BindingProvider* environmentProvider,
+    BindingProvider* directionalLightProvider
+) {
     auto toggleWireframeKey = glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS;
     if (toggleWireframeKey && !toggleWireframeKeyHeld) {
         useWireframe = !useWireframe;
@@ -361,8 +377,10 @@ void Terrain::Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32
         });
         commandBuffer.SetVertexBuffer(0, vertexBuffer[i]);
         commandBuffer.SetIndexBuffer(indexBuffer[i], vk::IndexType::eUint32);
-        BindGlobals(commandBuffer, frameIndex);
-        commandBuffer.SetBindSet(1, graphicsBindSet);
+        cameraProvider->Bind(0, commandBuffer, frameIndex);
+        environmentProvider->Bind(1, commandBuffer, frameIndex);
+        directionalLightProvider->Bind(2, commandBuffer, frameIndex);
+        commandBuffer.SetBindSet(3, graphicsBindSet);
         commandBuffer.DrawIndexed(indexCounts[i]);
 
         if (useNormals) {

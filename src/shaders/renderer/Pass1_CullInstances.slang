@@ -1,5 +1,5 @@
-#include "../Globals.slang"
-#include "RendererStructs.slang"
+#include "../Camera.slang"
+#include "../Renderer.slang"
 
 [[vk::binding(0, 0)]] StructuredBuffer<MeshMetadata> MeshMetadatas;
 [[vk::binding(1, 0)]] StructuredBuffer<Instance> Instances;
@@ -10,7 +10,7 @@
 [[vk::binding(2, 1)]] RWStructuredBuffer<Atomic<uint32_t>> MeshInstanceCounts;
 [[vk::binding(3, 1)]] RWStructuredBuffer<uint32_t> VisibleInstanceIndices;
 
-[[vk::binding(0, 2)]] ConstantBuffer<GlobalUniforms> Globals;
+[[vk::binding(0, 2)]] ConstantBuffer<CameraUniforms> Camera;
 
 [[vk::push_constant]] uint32_t NumInstances;
 

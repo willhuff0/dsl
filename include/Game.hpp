@@ -8,6 +8,7 @@
 #include "PostProcessing.hpp"
 #include "Terrain.hpp"
 #include "Skybox.hpp"
+#include "DirectionalLight.hpp"
 #include "Model.hpp"
 #include "Gui.hpp"
 
@@ -43,7 +44,9 @@ private:
     std::unique_ptr<Gui> gui = nullptr;
     std::unique_ptr<PostProcessing> postProcessing = nullptr;
     std::unique_ptr<Skybox> skybox = nullptr;
+    std::unique_ptr<DirectionalLight> directionalLight = nullptr;
     std::unique_ptr<Terrain> terrain = nullptr;
 
+    std::unique_ptr<ModelLoader> modelLoader = nullptr;
     std::vector<std::unique_ptr<Model>> models;
 };

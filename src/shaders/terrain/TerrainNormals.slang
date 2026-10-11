@@ -1,9 +1,9 @@
-#include "../Globals.slang"
+#include "../Camera.slang"
 
-[[vk::binding(0, 0)]] ConstantBuffer<GlobalUniforms> u_global;
+[[vk::binding(0, 0)]] ConstantBuffer<CameraUniforms> u_camera;
 
-[[vk::binding(0, 1)]] Texture2D<float> u_heightMap;
-[[vk::binding(1, 1)]] Texture2D<float4> u_normalMap;
+[[vk::binding(0, 3)]] Texture2D<float> u_heightMap;
+[[vk::binding(1, 3)]] Texture2D<float4> u_normalMap;
 
 [[vk::constant_id(0)]] const uint HEIGHTMAP_SIZE = 4096;
 [[vk::constant_id(1)]] const float METERS_PER_TEXEL = 1.0;
@@ -32,7 +32,7 @@ VertexOutput vs_main(VertexInput input, uint vertexID : SV_VertexID) {
     }
 
     float gridSize = METERS_PER_TEXEL * exp2(snapLod);
-    float2 snappedViewPos = floor(u_global.viewPos.xz / gridSize) * gridSize;
+    float2 snappedViewPos = floor(u_camera.viewPos.xz / gridSize) * gridSize;
 
     float2 worldXZ = snappedViewPos + input.positionXZ;
     int2 worldTexelXZ = int2(floor(worldXZ / METERS_PER_TEXEL + float2(HEIGHTMAP_SIZE / 2.0)));
@@ -51,7 +51,7 @@ VertexOutput vs_main(VertexInput input, uint vertexID : SV_VertexID) {
     float3 vertexPos = pos + (isTip ? normal * lineLength : 0.0);
 
     VertexOutput output;
-    output.position = mul(u_global.viewProjMat, float4(vertexPos, 1.0));
+    output.position = mul(u_camera.viewProjMat, float4(vertexPos, 1.0));
     output.color =
        isTip
             ? float3(1.0, 0.0, 0.0)

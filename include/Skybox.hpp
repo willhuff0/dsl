@@ -4,6 +4,7 @@
 
 #include "Provider.hpp"
 #include "ShaderHotReload.hpp"
+#include "BindingProvider.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -88,29 +89,42 @@ struct SkyboxUniforms {
     glm::mat4 viewMatrix;
 };
 
-class Skybox {
+struct alignas(16) EnvironmentUniforms {
+    uint32_t radianceMipMapCount;
+};
+
+class Skybox : public BindingProvider {
 public:
-    static int GetRadianceMipMapCount();
+    Skybox(
+        const CubeMap& environmentMap,
+        const CubeMap& irradianceMap,
+        const CubeMap& radianceMap,
+        const dvk::Texture::Ref& brdfLut,
+        BindingProvider* cameraProvider);
 
-    Skybox(CubeMap environmentMap, CubeMap irradianceMap, CubeMap radianceMap, dvk::Texture::Ref brdfLut);
+    static Skybox FromEquirectangularMap(BindingProvider* cameraProvider, const dvk::Texture::Ref& equirectangularMap);
+    static Skybox FromEquirectangularMap(BindingProvider* cameraProvider, const Data::Image& image);
 
-    static Skybox FromEquirectangularMap(const dvk::Texture::Ref& equirectangularMap);
-    static Skybox FromEquirectangularMap(const Data::Image& image);
+    void Draw(
+        dvk::CommandBuffer& commandBuffer,
+        uint32_t frameIndex,
+        BindingProvider* cameraProvider
+    );
 
-    void Draw(dvk::CommandBuffer& commandBuffer);
-
-    [[nodiscard]] dvk::Texture::Ref GetEnvironmentMap() const;
-    [[nodiscard]] dvk::Texture::Ref GetIrradianceMap() const;
-    [[nodiscard]] dvk::Texture::Ref GetRadianceMap() const;
-    [[nodiscard]] dvk::Texture::Ref GetBrdfLut() const;
+    dvk::BindSetLayout::Ref GetLayout() override;
+    void Bind(uint32_t binding, dvk::CommandBuffer& commandBuffer, uint32_t _) override;
 
 private:
-    CubeMap environmentMap;
-    CubeMap irradianceMap;
-    CubeMap radianceMap;
-    dvk::Texture::Ref brdfLut;
-
     Watcher graphicsPipelineWatcher;
     dvk::GraphicsPipeline::Ref graphicsPipeline;
     dvk::Buffer::Ref positionBuffer;
+
+    dvk::BindSetLayout::Ref environmentBindSetLayout;
+    dvk::Buffer::Ref environmentUniformsBuffer;
+    dvk::Sampler::Ref environmentSampler;
+    dvk::TextureView::Ref environmentView;
+    dvk::TextureView::Ref irradianceView;
+    dvk::TextureView::Ref radianceView;
+    dvk::TextureView::Ref brdfLutView;
+    dvk::BindSet::Ref environmentBindSet;
 };

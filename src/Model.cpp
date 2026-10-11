@@ -16,140 +16,22 @@
 #include <utility>
 #include <vector>
 
-static constexpr uint32_t IMPORT_FLAGS = 0;
-    // aiProcess_Triangulate |
-    // aiProcess_GenNormals |
-    // aiProcess_CalcTangentSpace |
-    // aiProcess_JoinIdenticalVertices |
-    // aiProcess_OptimizeMeshes |
-    // aiProcess_OptimizeGraph |
-    // aiProcess_ImproveCacheLocality |
-    // aiProcess_GenUVCoords |
-    // aiProcess_FindInvalidData |
-    // aiProcess_FindDegenerates |
-    // aiProcess_GenBoundingBoxes;
+static constexpr uint32_t IMPORT_FLAGS =
+    aiProcess_Triangulate |
+    aiProcess_GenNormals |
+    aiProcess_CalcTangentSpace |
+    aiProcess_JoinIdenticalVertices |
+    aiProcess_OptimizeMeshes |
+    aiProcess_OptimizeGraph |
+    aiProcess_ImproveCacheLocality |
+    aiProcess_FindInvalidData |
+    aiProcess_FindDegenerates;
 
 using AiTextureIndex = uint32_t;
 using AiMaterialIndex = uint32_t;
 using AiMeshIndex = uint32_t;
 
 namespace {
-    class ModelShaders {
-    public:
-        static ModelShaders& Get() {
-            static ModelShaders inst;
-            return inst;
-        }
-
-        [[nodiscard]] ShaderIndex GetOpaque() const {
-            return _opaque;
-        }
-
-        [[nodiscard]] ShaderIndex GetOpaqueDoubleSided() const {
-            return _opaqueDoubleSided;
-        }
-
-        [[nodiscard]] ShaderIndex GetTransparent() const {
-            return _transparent;
-        }
-
-        void Free() {
-            _opaqueWatcher = nullptr;
-        }
-
-    private:
-        ModelShaders() {
-            auto layout = dvk::PipelineLayout::Create(GetDevice())
-                .SetLabel("[Model]")
-                .AddBindSetLayout(GetRenderer().GetStaticBindSetLayout())
-                .AddBindSetLayout(GetRenderer().GetPerFrameBindSetLayout())
-                .AddBindSetLayout(GetGlobalBindSetLayout())
-                .AddBindSetLayout(GetRenderer().GetTexturesBindSetLayout())
-                .AddBindSetLayout(GetRenderer().GetShaderPassBindSetLayout())
-                .Build();
-
-            _opaqueWatcher = ShaderHotReload::CreateAndWatch(0, MODEL_SHADER_PATH, [this, layout](uint32_t frameIndex, const auto& path) {
-                auto shader = dvk::Shader::LoadFile(GetDevice(), path, "[Model] Opaque");
-                auto opaquePipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
-                    .SetLabel("[Model] Opaque")
-                    .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
-                    .SetRasterizer()
-                        .SetCullMode(vk::CullModeFlagBits::eBack)
-                        .FinishRasterizer()
-                    .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
-                    .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
-                        .SetConstant(0, false)
-                        .SetConstant(0, false)
-                        .FinishStage()
-                    .SetSingleAttachment(GetRenderTextureFormat())
-                    .EnableDepth(GetDepthFormat())
-                    .EnableMultisample(GetMultisampleCount())
-                    .Build();
-                auto opaqueDoubleSidedPipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
-                    .SetLabel("[Model] Opaque Double-Sided")
-                    .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
-                    .SetRasterizer()
-                        .SetCullMode(vk::CullModeFlagBits::eNone)
-                        .FinishRasterizer()
-                    .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
-                    .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
-                        .SetConstant(0, true)
-                        .SetConstant(1, false)
-                        .FinishStage()
-                    .SetSingleAttachment(GetRenderTextureFormat())
-                    .EnableDepth(GetDepthFormat())
-                    .EnableMultisample(GetMultisampleCount())
-                    .Build();
-                auto transparentPipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
-                    .SetLabel("[Model] Transparent")
-                    .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
-                    .SetRasterizer()
-                        .SetCullMode(vk::CullModeFlagBits::eNone)
-                        .FinishRasterizer()
-                    .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
-                    .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
-                        .SetConstant(0, true)
-                        .SetConstant(1, true)
-                        .FinishStage()
-                    .AddAttachment()
-                        .SetFormat(GetRenderTextureFormat())
-                        .EnableBlending()
-                        .SetColorBlend(vk::BlendOp::eAdd, vk::BlendFactor::eSrcAlpha, vk::BlendFactor::eOneMinusSrcAlpha)
-                        .SetAlphaBlend(vk::BlendOp::eAdd, vk::BlendFactor::eOne, vk::BlendFactor::eZero)
-                        .FinishAttachment()
-                    .SetDepth()
-                        .SetFormat(GetDepthFormat())
-                        .EnableDepthTest()
-                        .FinishDepth()
-                    .EnableMultisample(GetMultisampleCount())
-                    .Build();
-
-                if (_opaque == NULL_INDEX) {
-                    _opaque = GetRenderer().AddShader(opaquePipeline, false, "[Model] Opaque");
-                } else {
-                    GetRenderer().SetShaderPipeline(frameIndex, _opaque, opaquePipeline);
-                }
-
-                if (_opaqueDoubleSided == NULL_INDEX) {
-                    _opaqueDoubleSided = GetRenderer().AddShader(opaqueDoubleSidedPipeline, false, "[Model] Opaque Double-Sided");
-                } else {
-                    GetRenderer().SetShaderPipeline(frameIndex, _opaqueDoubleSided, opaqueDoubleSidedPipeline);
-                }
-
-                if (_transparent == NULL_INDEX) {
-                    _transparent = GetRenderer().AddShader(transparentPipeline, true, "[Model] Transparent");
-                } else {
-                    GetRenderer().SetShaderPipeline(frameIndex, _transparent, transparentPipeline);
-                }
-            });
-        }
-
-        Watcher _opaqueWatcher;
-        ShaderIndex _opaque = NULL_INDEX;
-        ShaderIndex _opaqueDoubleSided = NULL_INDEX;
-        ShaderIndex _transparent = NULL_INDEX;
-    };
-
     struct ModelLoadingContext {
         dvk::CommandBuffer& commandBuffer;
         uint32_t frameIndex;
@@ -159,6 +41,9 @@ namespace {
         std::unordered_map<std::string, TextureIndex>& externalTextures;
         std::unordered_map<AiMaterialIndex, std::pair<MaterialIndex, ShaderIndex>>& materials;
         std::unordered_map<AiMeshIndex, MeshIndex>& meshes;
+        ShaderIndex opaqueShader;
+        ShaderIndex opaqueDoubleSidedShader;
+        ShaderIndex transparentShader;
     };
 
     struct Material {
@@ -188,6 +73,104 @@ namespace {
 
         float alphaCutoff;
     };
+}
+
+Node::Ref Model::GetRoot() const {
+    return _root;
+}
+
+Model::Model(Node::Ref root) : _root(std::move(root)) { }
+
+ModelLoader::ModelLoader(
+    BindingProvider* cameraProvider,
+    BindingProvider* environmentProvider,
+    BindingProvider* directionalLightProvider
+) {
+    auto layout = dvk::PipelineLayout::Create(GetDevice())
+        .SetLabel("[Model]")
+        .AddBindSetLayout(GetRenderer().GetStaticBindSetLayout())
+        .AddBindSetLayout(GetRenderer().GetPerFrameBindSetLayout())
+        .AddBindSetLayout(cameraProvider->GetLayout())
+        .AddBindSetLayout(environmentProvider->GetLayout())
+        .AddBindSetLayout(directionalLightProvider->GetLayout())
+        .AddBindSetLayout(GetRenderer().GetTexturesBindSetLayout())
+        .AddBindSetLayout(GetRenderer().GetShaderPassBindSetLayout())
+        .Build();
+
+    _opaqueWatcher = ShaderHotReload::CreateAndWatch(0, MODEL_SHADER_PATH, [this, layout](uint32_t frameIndex, const auto& path) {
+        auto shader = dvk::Shader::LoadFile(GetDevice(), path, "[Model] Opaque");
+        auto opaquePipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
+            .SetLabel("[Model] Opaque")
+            .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
+            .SetRasterizer()
+                .SetCullMode(vk::CullModeFlagBits::eBack)
+                .FinishRasterizer()
+            .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
+            .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
+                .SetConstant(0, false)
+                .SetConstant(0, false)
+                .FinishStage()
+            .SetSingleAttachment(GetRenderTextureFormat())
+            .EnableDepth(GetDepthFormat())
+            .EnableMultisample(GetMultisampleCount())
+            .Build();
+        auto opaqueDoubleSidedPipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
+            .SetLabel("[Model] Opaque Double-Sided")
+            .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
+            .SetRasterizer()
+                .SetCullMode(vk::CullModeFlagBits::eNone)
+                .FinishRasterizer()
+            .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
+            .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
+                .SetConstant(0, true)
+                .SetConstant(1, false)
+                .FinishStage()
+            .SetSingleAttachment(GetRenderTextureFormat())
+            .EnableDepth(GetDepthFormat())
+            .EnableMultisample(GetMultisampleCount())
+            .Build();
+        auto transparentPipeline = dvk::GraphicsPipeline::Create(GetDevice(), layout)
+            .SetLabel("[Model] Transparent")
+            .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
+            .SetRasterizer()
+                .SetCullMode(vk::CullModeFlagBits::eNone)
+                .FinishRasterizer()
+            .AddStage(vk::ShaderStageFlagBits::eVertex, shader, "VertexMain").FinishStage()
+            .AddStage(vk::ShaderStageFlagBits::eFragment, shader, "FragmentMain")
+                .SetConstant(0, true)
+                .SetConstant(1, true)
+                .FinishStage()
+            .AddAttachment()
+                .SetFormat(GetRenderTextureFormat())
+                .EnableBlending()
+                .SetColorBlend(vk::BlendOp::eAdd, vk::BlendFactor::eSrcAlpha, vk::BlendFactor::eOneMinusSrcAlpha)
+                .SetAlphaBlend(vk::BlendOp::eAdd, vk::BlendFactor::eOne, vk::BlendFactor::eZero)
+                .FinishAttachment()
+            .SetDepth()
+                .SetFormat(GetDepthFormat())
+                .EnableDepthTest()
+                .FinishDepth()
+            .EnableMultisample(GetMultisampleCount())
+            .Build();
+
+        if (_opaque == NULL_INDEX) {
+            _opaque = GetRenderer().AddShader(opaquePipeline, false, "[Model] Opaque");
+        } else {
+            GetRenderer().SetShaderPipeline(frameIndex, _opaque, opaquePipeline);
+        }
+
+        if (_opaqueDoubleSided == NULL_INDEX) {
+            _opaqueDoubleSided = GetRenderer().AddShader(opaqueDoubleSidedPipeline, false, "[Model] Opaque Double-Sided");
+        } else {
+            GetRenderer().SetShaderPipeline(frameIndex, _opaqueDoubleSided, opaqueDoubleSidedPipeline);
+        }
+
+        if (_transparent == NULL_INDEX) {
+            _transparent = GetRenderer().AddShader(transparentPipeline, true, "[Model] Transparent");
+        } else {
+            GetRenderer().SetShaderPipeline(frameIndex, _transparent, transparentPipeline);
+        }
+    });
 }
 
 static Data::Image getImageFromUncompressed(
@@ -399,7 +382,7 @@ static std::pair<MaterialIndex, ShaderIndex> loadMaterial(
         .alphaCutoff = alphaCutoff,
     };
 
-    ShaderIndex shader = isTransparent ? ModelShaders::Get().GetTransparent() : isDoubleSided ? ModelShaders::Get().GetOpaqueDoubleSided() : ModelShaders::Get().GetOpaque();
+    ShaderIndex shader = isTransparent ? context.transparentShader : isDoubleSided ? context.opaqueDoubleSidedShader : context.opaqueShader;
     MaterialIndex rendererMaterialIndex = GetRenderer().AddMaterial(context.commandBuffer, context.frameIndex, shader, &materialDesc, sizeof(Material));
     auto cachePair = std::make_pair(rendererMaterialIndex, shader);
     context.materials.emplace(aiMaterialIndex, cachePair);
@@ -500,7 +483,7 @@ static Node::Ref loadNode(ModelLoadingContext& context, const aiNode* node) {
     return result;
 }
 
-Model Model::LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::string& path) {
+Model ModelLoader::LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::string& path) {
     Assimp::Importer importer;
     const aiScene* scene = importer.ReadFile(path.c_str(), IMPORT_FLAGS);
     if (scene == nullptr || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || scene->mRootNode == nullptr) {
@@ -527,36 +510,10 @@ Model Model::LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, co
         .externalTextures = externalTextures,
         .materials = materials,
         .meshes = meshes,
+        .opaqueShader = _opaque,
+        .opaqueDoubleSidedShader = _opaqueDoubleSided,
+        .transparentShader = _transparent,
     };
 
-    auto result = Node::Create("ROOT");
-
-    constexpr int width = 3;
-    constexpr int height = 3;
-    constexpr int depth = 3;
-
-    constexpr float spacing = 10.0f;
-
-    for (int x = 0; x < width; x++) {
-        for (int y = 0; y < height; y++) {
-            for (int z = 0; z < depth; z++) {
-                auto child = loadNode(context, scene->mRootNode);
-                child->SetLScale(glm::vec3(4.0f, 4.0f, 4.0f));
-                child->SetLPos(glm::vec3(x * spacing, -10.0f + y * spacing, -10.0f + -z * spacing));
-                result->AddChild(child);
-            }
-        }
-    }
-
-    return Model(result);
+    return Model(loadNode(context, scene->mRootNode));
 }
-
-void Model::FreeShaders() {
-    ModelShaders::Get().Free();
-}
-
-Node::Ref Model::GetRoot() const {
-    return _root;
-}
-
-Model::Model(Node::Ref root) : _root(std::move(root)) { }

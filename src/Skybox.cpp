@@ -11,7 +11,7 @@
 static constexpr int IRRADIANCE_MAP_SIZE = 64;
 static constexpr int RADIANCE_MAP_SIZE = 512;
 static constexpr int BRDF_LUT_SIZE = 512;
-static const int RADIANCE_MIPMAP_COUNT = static_cast<int>(std::floor(std::log2(RADIANCE_MAP_SIZE))) + 1;
+static const uint32_t RADIANCE_MIPMAP_COUNT = static_cast<uint32_t>(std::floor(std::log2(RADIANCE_MAP_SIZE))) + 1;
 
 static constexpr float cubeVertexPositions[] = {
     -1.0f,  1.0f, -1.0f,
@@ -505,15 +505,97 @@ dvk::Texture::Ref EnvBrdfLutGenerator::GenerateBrdfLut(const std::string& label)
     return texture;
 }
 
-Skybox::Skybox(CubeMap environmentMap, CubeMap irradianceMap, CubeMap radianceMap, dvk::Texture::Ref brdfLut)
-    : environmentMap(std::move(environmentMap)),
-      irradianceMap(std::move(irradianceMap)),
-      radianceMap(std::move(radianceMap)),
-      brdfLut(std::move(brdfLut)) {
-    auto pipelineLayout = dvk::PipelineLayout::Create(GetDevice())
-        .SetLabel("Skybox Layout")
-        .AddBindSetLayout(GetGlobalBindSetLayout())
+Skybox::Skybox(
+    const CubeMap& environmentMap,
+    const CubeMap& irradianceMap,
+    const CubeMap& radianceMap,
+    const dvk::Texture::Ref& brdfLut,
+    BindingProvider* cameraProvider
+) {
+    positionBuffer = dvk::Buffer::Create(GetDevice())
+        .SetLabel("Skybox Position Buffer")
+        .SetUsage(vk::BufferUsageFlagBits::eVertexBuffer)
+        .SetSize(sizeof(cubeVertexPositions))
+        .EnableWriteWithStaging()
         .Build();
+    positionBuffer->WriteWithStaging(GetCommandEncoder(), cubeVertexPositions);
+
+    environmentBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
+        .SetLabel("Environment Bind Set Layout")
+        .AddEntry(0)
+            .SetType(vk::DescriptorType::eUniformBuffer)
+            .SetStage(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment)
+            .FinishEntry()
+        .AddEntry(1)
+            .SetType(vk::DescriptorType::eSampler)
+            .SetStage(vk::ShaderStageFlagBits::eFragment)
+            .FinishEntry()
+        .AddEntry(2)
+            .SetType(vk::DescriptorType::eSampledImage)
+            .SetStage(vk::ShaderStageFlagBits::eFragment)
+            .FinishEntry(4)
+        .Build();
+
+    environmentUniformsBuffer = dvk::Buffer::Create(GetDevice())
+        .SetLabel("Environment Uniform Buffer")
+        .SetSize(sizeof(EnvironmentUniforms))
+        .SetUsage(vk::BufferUsageFlagBits::eUniformBuffer)
+        .EnableWriteWithStaging()
+        .Build();
+    EnvironmentUniforms uniforms {
+        .radianceMipMapCount = RADIANCE_MIPMAP_COUNT,
+    };
+    environmentUniformsBuffer->WriteWithStaging(GetCommandEncoder(), &uniforms);
+
+    environmentSampler = dvk::Sampler::Create(GetDevice())
+        .SetLabel("Environment Sampler")
+        .SetAddressMode(vk::SamplerAddressMode::eClampToEdge)
+        .SetLodBounds(0.0f, 32.0f)
+        .Build();
+    environmentView = dvk::TextureView::Create(GetDevice(), environmentMap.GetTexture())
+        .SetLabel("Global Environment CubeMap")
+        .SetType(vk::ImageViewType::eCube)
+        .Build();
+    irradianceView = dvk::TextureView::Create(GetDevice(), irradianceMap.GetTexture())
+        .SetLabel("Global Irradiance CubeMap")
+        .SetType(vk::ImageViewType::eCube)
+        .Build();
+    radianceView = dvk::TextureView::Create(GetDevice(), radianceMap.GetTexture())
+        .SetLabel("Global Radiance CubeMap")
+        .SetType(vk::ImageViewType::eCube)
+        .Build();
+    brdfLutView = dvk::TextureView::Create(GetDevice(), brdfLut)
+        .SetLabel("Global Environment BRDF LUT")
+        .Build();
+
+    environmentBindSet = dvk::BindSet::Create(GetDevice(), GetBindPool(), environmentBindSetLayout);
+    dvk::Binder()
+        .BindBuffer(0)
+            .SetBufferType(vk::DescriptorType::eUniformBuffer)
+            .SetBuffer(environmentUniformsBuffer)
+            .FinishBuffer()
+        .BindSampler(1)
+            .SetSampler(environmentSampler)
+            .FinishSampler()
+        .BindTexture(2)
+            .SetTextureView(environmentView)
+            .FinishTexture()
+        .BindTexture(3)
+            .SetTextureView(irradianceView)
+            .FinishTexture()
+        .BindTexture(4)
+            .SetTextureView(radianceView)
+            .FinishTexture()
+        .BindTexture(5)
+            .SetTextureView(brdfLutView)
+            .FinishTexture()
+        .Update(environmentBindSet);
+
+    auto pipelineLayout = dvk::PipelineLayout::Create(GetDevice())
+    .SetLabel("Skybox Layout")
+    .AddBindSetLayout(cameraProvider->GetLayout())
+    .AddBindSetLayout(environmentBindSetLayout)
+    .Build();
     graphicsPipelineWatcher = ShaderHotReload::CreateAndWatch(SB_SKYBOX_SHADER_PATH, [this, pipelineLayout](const auto& path) {
         auto shader = dvk::Shader::LoadFile(GetDevice(), path, "Skybox Module");
         graphicsPipeline = dvk::GraphicsPipeline::Create(GetDevice(), pipelineLayout)
@@ -531,18 +613,12 @@ Skybox::Skybox(CubeMap environmentMap, CubeMap irradianceMap, CubeMap radianceMa
             .EnableMultisample(GetMultisampleCount())
             .Build();
     });
-
-    positionBuffer = dvk::Buffer::Create(GetDevice())
-        .SetLabel("Skybox Position Buffer")
-        .SetUsage(vk::BufferUsageFlagBits::eVertexBuffer)
-        .SetSize(sizeof(cubeVertexPositions))
-        .EnableWriteWithStaging()
-        .Build();
-    positionBuffer->WriteWithStaging(GetCommandEncoder(), cubeVertexPositions);
 }
 
-Skybox Skybox::FromEquirectangularMap(const dvk::Texture::Ref& equirectangularMap) {
-    // Mirrors the Dart `Skybox.fromHdri` flow.
+Skybox Skybox::FromEquirectangularMap(
+    BindingProvider* cameraProvider,
+    const dvk::Texture::Ref& equirectangularMap
+) {
     CubeMapConverter converter;
     CubeMap environmentMap = CubeMap::FromEquirectangular(converter, equirectangularMap);
     CubeMap irradianceMap = environmentMap.GenerateIrradianceMap(converter);
@@ -551,10 +627,18 @@ Skybox Skybox::FromEquirectangularMap(const dvk::Texture::Ref& equirectangularMa
     EnvBrdfLutGenerator brdfLutGenerator;
     auto brdfLut = brdfLutGenerator.GenerateBrdfLut();
 
-    return Skybox(std::move(environmentMap), std::move(irradianceMap), std::move(radianceMap), brdfLut);
+    return Skybox(
+        environmentMap,
+        irradianceMap,
+        radianceMap,
+        brdfLut,
+        cameraProvider);
 }
 
-Skybox Skybox::FromEquirectangularMap(const Data::Image& image) {
+Skybox Skybox::FromEquirectangularMap(
+    BindingProvider* cameraProvider,
+    const Data::Image& image
+) {
     auto texture = dvk::Texture::Create(GetDevice())
         .SetLabel("Skybox Equirectangular Map")
         .SetFormat(vk::Format::eR16G16B16A16Sfloat)
@@ -563,21 +647,25 @@ Skybox Skybox::FromEquirectangularMap(const Data::Image& image) {
         .EnableWriteWithStaging()
         .Build();
     texture->WriteWithStaging(GetCommandEncoder(), image.data.get(), image.size);
-    return FromEquirectangularMap(texture);
+    return FromEquirectangularMap(cameraProvider, texture);
 }
 
-void Skybox::Draw(dvk::CommandBuffer& commandBuffer) {
+void Skybox::Draw(
+    dvk::CommandBuffer& commandBuffer,
+    uint32_t frameIndex,
+    BindingProvider* cameraProvider
+) {
     commandBuffer.SetGraphicsPipeline(graphicsPipeline);
     commandBuffer.SetVertexBuffer(0, positionBuffer);
-    BindGlobals(commandBuffer, 0);
+    cameraProvider->Bind(0, commandBuffer, frameIndex);
+    Bind(1, commandBuffer, frameIndex);
     commandBuffer.Draw(36);
 }
 
-dvk::Texture::Ref Skybox::GetEnvironmentMap() const { return environmentMap.GetTexture(); }
-dvk::Texture::Ref Skybox::GetIrradianceMap() const { return irradianceMap.GetTexture(); }
-dvk::Texture::Ref Skybox::GetRadianceMap() const { return radianceMap.GetTexture(); }
-dvk::Texture::Ref Skybox::GetBrdfLut() const { return brdfLut; }
+dvk::BindSetLayout::Ref Skybox::GetLayout() {
+    return environmentBindSetLayout;
+}
 
-int Skybox::GetRadianceMipMapCount() {
-    return RADIANCE_MIPMAP_COUNT;
+void Skybox::Bind(uint32_t binding, dvk::CommandBuffer& commandBuffer, uint32_t _) {
+    commandBuffer.SetBindSet(binding, environmentBindSet);
 }

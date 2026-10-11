@@ -5,30 +5,22 @@
 #include <dvk/dvk.hpp>
 #include <glm/glm.hpp>
 
+#include "BindingProvider.hpp"
+
 class Renderer;
+class BindingProvider;
 
 constexpr uint32_t FRAMES_IN_FLIGHT = 2;
+constexpr vk::Format SHADOW_DEPTH_FORMAT = vk::Format::eD32Sfloat;
 
-struct alignas(16) GlobalUniforms {
-    glm::mat4 viewProjMat;
-    glm::mat4 projMat;
-    glm::mat4 viewMat;
-    glm::vec3 viewPos;
-    uint32_t radianceMipMapCount;
-};
-
-void SetupProvider(Platform* platform, dvk::Instance* instance, dvk::Device* device, dvk::CommandEncoder* commandEncoder, vk::Format surfaceFormat);
+void SetupProvider(
+    Platform* platform,
+    dvk::Instance* instance,
+    dvk::Device* device,
+    dvk::CommandEncoder* commandEncoder,
+    vk::Format surfaceFormat);
+void SetupRenderer(BindingProvider* cameraProvider);
 void FreeProvider();
-
-void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex);
-void SetSkybox(const dvk::Texture::Ref& environmentMap,
-               const dvk::Texture::Ref& irradianceMap,
-               const dvk::Texture::Ref& radianceMap,
-               const dvk::Texture::Ref& brdfLuts);
-
-void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, uint32_t binding = 0);
-
-dvk::BindSetLayout::Ref GetGlobalBindSetLayout();
 
 Platform* GetPlatform();
 dvk::Instance& GetInstance();

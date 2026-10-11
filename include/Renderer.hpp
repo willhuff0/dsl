@@ -3,6 +3,7 @@
 #include "utils/GrowingBuffer.hpp"
 #include "ShaderHotReload.hpp"
 #include "Provider.hpp"
+#include "BindingProvider.hpp"
 
 #include <dvk/dvk.hpp>
 
@@ -123,7 +124,7 @@ struct ShaderPass {
 
 class Renderer {
 public:
-    Renderer();
+    Renderer(BindingProvider* cameraProvider);
 
     ShaderIndex AddShader(const dvk::GraphicsPipeline::Ref& pipeline, bool isTransparent = false, const std::string& name = "");
     void SetShaderPipeline(uint32_t frameIndex, ShaderIndex shader, const dvk::GraphicsPipeline::Ref& pipeline);
@@ -133,9 +134,29 @@ public:
     MeshIndex AddMesh(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const MeshDesc& meshDesc);
     std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> AddInstance(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc);
 
-    void Update(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
-    void DrawOpaque(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
-    void DrawTransparent(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
+    void UploadWorldState(
+        dvk::CommandBuffer& commandBuffer,
+        uint32_t frameIndex);
+    void ComputeDrawCommands(
+        dvk::CommandBuffer& commandBuffer,
+        uint32_t frameIndex,
+        BindingProvider* cameraProvider);
+    void DrawOpaque(
+        dvk::CommandBuffer& commandBuffer,
+        uint32_t frameIndex,
+        BindingProvider* cameraProvider,
+        BindingProvider* environmentProvider,
+        BindingProvider* directionalLightProvider);
+    void DrawTransparent(
+        dvk::CommandBuffer& commandBuffer,
+        uint32_t frameIndex,
+        BindingProvider* cameraProvider,
+        BindingProvider* environmentProvider,
+        BindingProvider* directionalLightProvider);
+    void DrawForShadows(
+        dvk::CommandBuffer& commandBuffer,
+        uint32_t frameIndex,
+        BindingProvider* cameraProvider);
 
     [[nodiscard]] dvk::BindSetLayout::Ref GetStaticBindSetLayout() const;
     [[nodiscard]] dvk::BindSetLayout::Ref GetPerFrameBindSetLayout() const;
@@ -200,6 +221,9 @@ private:
     uint32_t _numTransparentShaderPasses = 0;
 
     dvk::Sampler::Ref _defaultSampler;
+
+    Watcher _depthOnlyPipelineWatcher;
+    dvk::GraphicsPipeline::Ref _depthOnlyPipeline;
 
     void _setNeedRebindMeshMetadata();
     void _setNeedRebindInstances();

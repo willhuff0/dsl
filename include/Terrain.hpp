@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ShaderHotReload.hpp"
+#include "BindingProvider.hpp"
 
 #include <dvk/dvk.hpp>
 
@@ -13,10 +14,19 @@ struct LodConstants {
 
 class Terrain {
 public:
-    Terrain();
+    Terrain(
+        BindingProvider* cameraProvider,
+        BindingProvider* environmentProvider,
+        BindingProvider* directionalLightProvider);
 
     void Update(const glm::vec3& cameraPos, dvk::CommandBuffer& commandBuffer);
-    void Draw(GLFWwindow* window, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex);
+    void Draw(
+        GLFWwindow* window,
+        dvk::CommandBuffer& commandBuffer,
+        uint32_t frameIndex,
+        BindingProvider* cameraProvider,
+        BindingProvider* environmentProvider,
+        BindingProvider* directionalLightProvider);
 
 private:
     struct GenRegion {

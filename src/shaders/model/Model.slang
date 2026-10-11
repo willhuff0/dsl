@@ -1,12 +1,11 @@
-#include "../Globals.slang"
-#include "../renderer/RendererStructs.slang"
+#include "../Camera.slang"
+#include "../Environment.slang"
+#include "../DirectionalLight.slang"
+#include "../Renderer.slang"
 #include "../Fog.slang"
 
 static const uint32_t NULL_INDEX = 0xFFFFFFFF;
 static const float PI = 3.14159265359;
-
-static const float3 DIRECTIONAL_LIGHT_DIRECTION = float3(0.5, 0.5, 0.5);
-static const float3 DIRECTIONAL_LIGHT_RADIANCE = float3(1.0, 0.95, 0.9) * 1.5;
 
 static const float AMBIENT_INTENSITY = 1.0;
 
@@ -16,15 +15,21 @@ static const float AMBIENT_INTENSITY = 1.0;
 [[vk::binding(0, 1)]] StructuredBuffer<InstanceFrameData> DynamicInstanceFrameDatas;
 [[vk::binding(3, 1)]] StructuredBuffer<uint32_t> VisibleInstanceIndices;
 
-[[vk::binding(0, 2)]] ConstantBuffer<GlobalUniforms> Globals;
-[[vk::binding(1, 2)]] SamplerState EnvironmentSampler;
-[[vk::binding(2, 2)]] TextureCube<float4> EnvironmentMap;
-[[vk::binding(3, 2)]] TextureCube<float4> IrradianceMap;
-[[vk::binding(4, 2)]] TextureCube<float4> RadianceMap;
-[[vk::binding(5, 2)]] Texture2D<float2> BrdfLut;
+[[vk::binding(0, 2)]] ConstantBuffer<CameraUniforms> Camera;
 
-[[vk::binding(0, 3)]] Texture2D Textures[];
-[[vk::binding(1, 3)]] SamplerState Samplers[];
+[[vk::binding(0, 3)]] ConstantBuffer<EnvironmentUniforms> Environment;
+[[vk::binding(1, 3)]] SamplerState EnvironmentSampler;
+[[vk::binding(2, 3)]] TextureCube<float4> EnvironmentMap;
+[[vk::binding(3, 3)]] TextureCube<float4> IrradianceMap;
+[[vk::binding(4, 3)]] TextureCube<float4> RadianceMap;
+[[vk::binding(5, 3)]] Texture2D<float2> BrdfLut;
+
+[[vk::binding(0, 4)]] ConstantBuffer<DirectionalLightUniforms> DirectionalLight;
+[[vk::binding(1, 4)]] DepthTexture2DArray CascadedShadowMap;
+[[vk::binding(2, 4)]] SamplerComparisonState CascadedShadowMapSampler;
+
+[[vk::binding(0, 5)]] Texture2D Textures[];
+[[vk::binding(1, 5)]] SamplerState Samplers[];
 
 struct VertexOutput {
     float4 projectedPosition : SV_Position;
@@ -57,7 +62,7 @@ VertexOutput VertexMain(
     float4 position = mul(instanceFrameData.modelMat, float4(input.position, 1.0));
 
     VertexOutput output;
-    output.projectedPosition = mul(Globals.viewProjMat, position);
+    output.projectedPosition = mul(Camera.viewProjMat, position);
     output.position = position.xyz;
     output.normal = mul(vectorMatrix, input.normal);
     output.tangent = mul(vectorMatrix, input.tangent.xyz);
@@ -95,7 +100,7 @@ struct Material {
 
     float alphaCutoff;
 };
-[[vk::binding(0, 4)]] StructuredBuffer<Material> Materials;
+[[vk::binding(0, 6)]] StructuredBuffer<Material> Materials;
 
 [[vk::constant_id(0)]] const bool IS_DOUBLE_SIDED = false;
 [[vk::constant_id(1)]] const bool IS_TRANSPARENT = false;
@@ -204,10 +209,10 @@ float4 FragmentMain(
         N = normalize(mul(nTex, tbn));
     }
 
-    float3 V = normalize(Globals.viewPos - input.position);
-    float3 L = normalize(DIRECTIONAL_LIGHT_DIRECTION);
+    float3 V = normalize(Camera.viewPos - input.position);
+    float3 L = normalize(DirectionalLight.direction);
     float3 H = normalize(V + L);
-    float3 radiance = DIRECTIONAL_LIGHT_RADIANCE;
+    float3 radiance = DirectionalLight.color;
 
     float NdotV = max(dot(N, V), 0.000001);
     float NdotL = max(dot(N, L), 0.0);
@@ -232,7 +237,7 @@ float4 FragmentMain(
     float3 irradiance = IrradianceMap.Sample(EnvironmentSampler, N).rgb;
     float3 diffuseIBL = irradiance * baseColor.rgb;
 
-    float maxReflectionLOD = float(Globals.radianceMipMapCount) - 1.0;
+    float maxReflectionLOD = float(Environment.radianceMipMapCount) - 1.0;
     float3 R = reflect(-V, N);
     float3 prefilteredColor = RadianceMap.SampleLevel(EnvironmentSampler, R, roughness * maxReflectionLOD).rgb;
     float2 envBRDF = BrdfLut.Sample(EnvironmentSampler, float2(NdotV, roughness)).rg;
@@ -253,13 +258,20 @@ float4 FragmentMain(
         emissive *= eTex;
     }
 
-    float shadow = 0.0; // calculateShadow(input.position, N, L);
+    float3 shadow = CalculateDirectionalLightShadow(
+        DirectionalLight,
+        CascadedShadowMap,
+        CascadedShadowMapSampler,
+        Camera.viewMat,
+        input.position,
+        N,
+        L);
     float3 color = ambient * ao + Lo * (1.0 - shadow) + emissive;
 
     color = ApplyDistanceFog(
         color,
         input.position,
-        Globals.viewPos,
+        Camera.viewPos,
         EnvironmentSampler,
         EnvironmentMap
     );

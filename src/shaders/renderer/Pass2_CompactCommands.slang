@@ -1,4 +1,4 @@
-#include "RendererStructs.slang"
+#include "../Renderer.slang"
 
 [[vk::binding(0, 0)]] StructuredBuffer<MeshMetadata> MeshMetadatas;
 

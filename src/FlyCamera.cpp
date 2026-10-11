@@ -15,6 +15,9 @@
 
 #define FOV glm::radians(80.0f)
 
+static constexpr float Z_NEAR = 0.1f;
+static constexpr float Z_FAR = 5000.0f;
+
 static double scrollDelta;
 static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset) {
     scrollDelta += yOffset;
@@ -65,6 +68,31 @@ FlyCamera::FlyCamera(GLFWwindow* window, glm::vec3 startPos) : window(window), p
 
     glfwSetScrollCallback(window, scrollCallback);
 
+    _bindSetLayout = dvk::BindSetLayout::Create(GetDevice())
+        .SetLabel("[Camera] Bind Set Layout")
+        .AddEntry(0)
+            .SetType(vk::DescriptorType::eUniformBuffer)
+            .SetStage(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment)
+            .FinishEntry()
+        .Build();
+
+    _uniformBuffer = dvk::Buffer::Create(GetDevice())
+        .SetLabel("[Camera] Uniform Buffer")
+        .SetSize(sizeof(CameraUniforms))
+        .SetUsage(vk::BufferUsageFlagBits::eUniformBuffer)
+        .EnableCopyToAndFlush()
+        .Build<FRAMES_IN_FLIGHT>();
+
+    _bindSet = dvk::BindSet::Create<FRAMES_IN_FLIGHT>(GetDevice(), GetBindPool(), _bindSetLayout, "[Camera] Bind Set");
+    for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        dvk::Binder()
+            .BindBuffer(0)
+                .SetBuffer(_uniformBuffer[i])
+                .SetBufferType(vk::DescriptorType::eUniformBuffer)
+                .FinishBuffer()
+            .Update(_bindSet[i]);
+    }
+
     tick();
 }
 
@@ -88,9 +116,31 @@ void FlyCamera::Tick() {
     tick();
 }
 
+void FlyCamera::UpdateUniforms(uint32_t frameIndex) {
+    CameraUniforms uniforms {
+        .viewProjMat = projMat * viewMat,
+        .projMat = projMat,
+        .viewMat = viewMat,
+        .viewPos = pos,
+    };
+    _uniformBuffer[frameIndex]->CopyToAndFlush(&uniforms);
+}
+
 glm::vec3 FlyCamera::GetPos() const { return pos; }
 glm::mat4 FlyCamera::GetProjMat() const { return projMat; }
 glm::mat4 FlyCamera::GetViewMat() const { return viewMat; }
+float FlyCamera::GetZNear() const { return Z_NEAR; }
+float FlyCamera::GetZFar() const { return Z_FAR; }
+float FlyCamera::GetFovRad() const { return FOV; }
+float FlyCamera::GetAspectRatio() const { return aspectRatio; }
+
+dvk::BindSetLayout::Ref FlyCamera::GetLayout() {
+    return _bindSetLayout;
+}
+
+void FlyCamera::Bind(uint32_t binding, dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
+    commandBuffer.SetBindSet(binding, _bindSet[frameIndex]);
+}
 
 void FlyCamera::tick() {
     double time = glfwGetTime();
@@ -99,7 +149,7 @@ void FlyCamera::tick() {
 
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
-    float aspectRatio = (float)windowWidth / (float)windowHeight;
+    aspectRatio = (float)windowWidth / (float)windowHeight;
 
     double windowCenterX = (double)windowWidth / 2.0;
     double windowCenterY = (double)windowHeight / 2.0;
@@ -157,10 +207,7 @@ void FlyCamera::tick() {
     pos += moveDir * speed * sprint * (float)dt;
 
     viewMat = glm::lookAt(pos, pos + forward, glm::vec3(0.0f, 1.0f, 0.0f));
-
-    float nearClip = 0.1f;
-    float farClip = 5000.0f;
-    projMat = glm::perspective(FOV, aspectRatio, nearClip, farClip);
+    projMat = glm::perspectiveRH_ZO(FOV, aspectRatio, Z_NEAR, Z_FAR);
 
     scrollDelta = 0.0;
 }

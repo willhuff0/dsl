@@ -1,7 +1,7 @@
 #include "Provider.hpp"
 
 #include "Renderer.hpp"
-#include "Model.hpp"
+#include "BindingProvider.hpp"
 
 #include <utility>
 #include <optional>
@@ -15,15 +15,6 @@ static vk::SampleCountFlagBits sampleCount;
 
 static dvk::CommandEncoder* graphicsCommandEncoder;
 static dvk::BindPool::Ref bindPool;
-
-static dvk::BindSetLayout::Ref globalBindSetLayout;
-static dvk::Buffer::Refs<FRAMES_IN_FLIGHT> globalUniformsBuffer;
-static std::array<dvk::BindSet::Ref, FRAMES_IN_FLIGHT> globalBindSet;
-static dvk::Sampler::Ref environmentSampler;
-static dvk::TextureView::Ref environmentView;
-static dvk::TextureView::Ref irradianceView;
-static dvk::TextureView::Ref radianceView;
-static dvk::TextureView::Ref brdfLutView;
 
 static constexpr auto renderTextureFormat = vk::Format::eR16G16B16A16Sfloat;
 
@@ -64,38 +55,6 @@ void SetupProvider(Platform* platform, dvk::Instance* instance, dvk::Device* dev
         .AddEntry(vk::DescriptorType::eStorageImage, 2)
         .Build();
 
-    globalBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
-        .SetLabel("Global")
-        .AddEntry(0)
-            .SetType(vk::DescriptorType::eUniformBuffer)
-            .SetStage(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eGeometry | vk::ShaderStageFlagBits::eFragment)
-            .FinishEntry()
-        .AddEntry(1)
-            .SetType(vk::DescriptorType::eSampler)
-            .SetStage(vk::ShaderStageFlagBits::eFragment)
-            .FinishEntry()
-        .AddEntry(2)
-            .SetType(vk::DescriptorType::eSampledImage)
-            .SetStage(vk::ShaderStageFlagBits::eFragment)
-            .FinishEntry(4)
-        .Build();
-
-    globalUniformsBuffer = dvk::Buffer::Create(GetDevice())
-        .SetLabel("Global Uniform Buffer")
-        .SetSize(sizeof(GlobalUniforms))
-        .SetUsage(vk::BufferUsageFlagBits::eUniformBuffer)
-        .AllowRandomAccess()
-        .EnablePersistentMapping()
-        .Build<FRAMES_IN_FLIGHT>();
-
-    environmentSampler = dvk::Sampler::Create(GetDevice())
-        .SetLabel("Global Environment Sample")
-        .SetAddressMode(vk::SamplerAddressMode::eClampToEdge)
-        // .SetAnisotropy(false, 1.0f)
-        .SetLodBounds(0.0f, 32.0f)
-        // .SetBorderColor(vk::BorderColor::eFloatTransparentBlack)
-        .Build();
-
     sampleCount = getMaxUsableSampleCount();
 
     debugTextureBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
@@ -106,90 +65,21 @@ void SetupProvider(Platform* platform, dvk::Instance* instance, dvk::Device* dev
             .FinishEntry()
         .Build();
     debugTextureBindSet = dvk::BindSet::Create(GetDevice(), GetBindPool(), debugTextureBindSetLayout, "Debug Texture Blit");
+}
 
-    renderer.emplace();
+void SetupRenderer(BindingProvider* cameraProvider) {
+    renderer.emplace(cameraProvider);
 }
 
 void FreeProvider() {
-    Model::FreeShaders();
-
     renderer = std::nullopt;
 
-    globalBindSetLayout = nullptr;
-    environmentSampler = nullptr;
     debugTextureBindSetLayout = nullptr;
     debugTextureBindSet = nullptr;
     debugTextureView = nullptr;
 
-    environmentView = nullptr;
-    irradianceView = nullptr;
-    radianceView = nullptr;
-    brdfLutView = nullptr;
-
-    globalUniformsBuffer.fill(nullptr);
-    globalBindSet.fill(nullptr);
-
     bindPool = nullptr;
 }
-
-void SetGlobalUniforms(GlobalUniforms* uniforms, uint32_t frameIndex) {
-    globalUniformsBuffer[frameIndex]->CopyToAndFlush(uniforms);
-}
-
-void SetSkybox(const dvk::Texture::Ref& environmentMap,
-               const dvk::Texture::Ref& irradianceMap,
-               const dvk::Texture::Ref& radianceMap,
-               const dvk::Texture::Ref& brdfLut) {
-    environmentView = dvk::TextureView::Create(GetDevice(), environmentMap)
-        .SetLabel("Global Environment CubeMap")
-        .SetType(vk::ImageViewType::eCube)
-        .Build();
-
-    irradianceView = dvk::TextureView::Create(GetDevice(), irradianceMap)
-        .SetLabel("Global Irradiance CubeMap")
-        .SetType(vk::ImageViewType::eCube)
-        .Build();
-
-    radianceView = dvk::TextureView::Create(GetDevice(), radianceMap)
-        .SetLabel("Global Radiance CubeMap")
-        .SetType(vk::ImageViewType::eCube)
-        .Build();
-
-    brdfLutView = dvk::TextureView::Create(GetDevice(), brdfLut)
-        .SetLabel("Global Environment BRDF LUT")
-        .Build();
-
-    globalBindSet = dvk::BindSet::Create<FRAMES_IN_FLIGHT>(GetDevice(), GetBindPool(), globalBindSetLayout);
-    for (size_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        dvk::Binder()
-            .BindBuffer(0)
-                .SetBufferType(vk::DescriptorType::eUniformBuffer)
-                .SetBuffer(globalUniformsBuffer[i])
-                .FinishBuffer()
-            .BindSampler(1)
-                .SetSampler(environmentSampler)
-                .FinishSampler()
-            .BindTexture(2)
-                .SetTextureView(environmentView)
-                .FinishTexture()
-            .BindTexture(3)
-                .SetTextureView(irradianceView)
-                .FinishTexture()
-            .BindTexture(4)
-                .SetTextureView(radianceView)
-                .FinishTexture()
-            .BindTexture(5)
-                .SetTextureView(brdfLutView)
-                .FinishTexture()
-            .Update(globalBindSet[i]);
-    }
-}
-
-void BindGlobals(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, uint32_t binding) {
-    commandBuffer.SetBindSet(binding, globalBindSet[frameIndex]);
-}
-
-dvk::BindSetLayout::Ref GetGlobalBindSetLayout() { return globalBindSetLayout; }
 
 Platform* GetPlatform() { return platformBackend; }
 dvk::Instance& GetInstance() { return *graphicsInstance; }
@@ -218,3 +108,4 @@ const dvk::BindSet::Ref& GetDebugTextureBindSet() { return debugTextureBindSet; 
 Renderer& GetRenderer() {
     return renderer.value();
 }
+

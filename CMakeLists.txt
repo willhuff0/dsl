@@ -51,6 +51,8 @@ target_sources(dsl
         src/Renderer.cpp
         src/Model.cpp
         src/Gui.cpp
+        src/DirectionalLight.cpp
+        src/CascadedShadowMap.cpp
     PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
@@ -80,6 +82,9 @@ target_sources(dsl
         include/Renderer.hpp
         include/Model.hpp
         include/Gui.hpp
+        include/DirectionalLight.hpp
+        include/CascadedShadowMap.hpp
+        include/BindingProvider.hpp
 )
 
 target_include_directories(dsl

@@ -19,16 +19,25 @@ Game::Game(Platform* platform, Window::Ref window, dvk::Surface& surface, dvk::P
       flyCamera(static_cast<GLFWwindow*>(this->window->GetNativeHandle()), glm::vec3(0.0f, 0.5f, 10.0f)) {
     gui = std::make_unique<Gui>(static_cast<GLFWwindow*>(this->window->GetNativeHandle()), presenter);
     postProcessing = std::make_unique<PostProcessing>();
-    skybox = std::make_unique<Skybox>(Skybox::FromEquirectangularMap(LoadHDRI(SKYBOX_HDRI_PATH)));
-    terrain = std::make_unique<Terrain>();
+    skybox = std::make_unique<Skybox>(Skybox::FromEquirectangularMap(&flyCamera, LoadHDRI(SKYBOX_HDRI_PATH)));
+    directionalLight = std::make_unique<DirectionalLight>(&flyCamera);
+    SetupRenderer(&flyCamera);
+    // terrain = std::make_unique<Terrain>(
+    //     &flyCamera,
+    //     skybox.get(),
+    //     directionalLight.get()
+    // );
+    modelLoader = std::make_unique<ModelLoader>(
+        &flyCamera,
+        skybox.get(),
+        directionalLight.get()
+    );
     GetCommandEncoder().ExecuteAndWait([&](dvk::CommandBuffer& commandBuffer) {
         // models.emplace_back(std::make_unique<Model>(Model::LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/models/AlphaBlendModeTest.glb")));
-        models.emplace_back(std::make_unique<Model>(Model::LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/models/DamagedHelmet.glb")));
+        models.emplace_back(std::make_unique<Model>(modelLoader->LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/Bistro_Godot.glb")));
     });
     // models[0]->GetRoot()->SetLScale(glm::vec3(5.0f, 5.0f, 5.0f));
     // models[0]->GetRoot()->SetLPos(glm::vec3(0.0f, -5.0f, -100.0f));
-
-    SetSkybox(skybox->GetEnvironmentMap(), skybox->GetIrradianceMap(), skybox->GetRadianceMap(), skybox->GetBrdfLut());
 
     GetDevice().GetQueue().waitIdle();
     regenerateRenderTextures();
@@ -56,20 +65,25 @@ void Game::MainLoop() {
     gui->BeginFrame();
     gui->DrawFpsOverlay();
 
-    // Render
-    GlobalUniforms globalUniforms {
-        .viewProjMat = flyCamera.GetProjMat() * flyCamera.GetViewMat(),
-        .projMat = flyCamera.GetProjMat(),
-        .viewMat = flyCamera.GetViewMat(),
-        .viewPos = flyCamera.GetPos(),
-        .radianceMipMapCount = static_cast<uint32_t>(Skybox::GetRadianceMipMapCount()),
-    };
-    SetGlobalUniforms(&globalUniforms, frameIndex);
+    // terrain->Update(flyCamera.GetPos(), commandBuffer);
+    GetRenderer().UploadWorldState(commandBuffer, frameIndex);
 
-    terrain->Update(flyCamera.GetPos(), commandBuffer);
-    GetRenderer().Update(commandBuffer, frameIndex);
+    commandBuffer.BeginRegion("CSM Depth");
+    directionalLight->RegenerateLightSpaceMatrices(
+        frameIndex,
+        flyCamera.GetViewMat(),
+        flyCamera.GetZNear(),
+        flyCamera.GetZFar(),
+        flyCamera.GetFovRad(),
+        flyCamera.GetAspectRatio()
+    );
+    directionalLight->DrawShadowMap(commandBuffer, frameIndex);
+    commandBuffer.EndRegion();
 
-    // Main Render Pass
+    commandBuffer.BeginRegion("Main");
+    flyCamera.UpdateUniforms(frameIndex);
+    GetRenderer().ComputeDrawCommands(commandBuffer, frameIndex, &flyCamera);
+
     auto postProcessingInputRenderTextureView = postProcessing->GetPostProcessingInputTextureView();
 
     commandBuffer.InsertBarriers()
@@ -105,17 +119,25 @@ void Game::MainLoop() {
         {static_cast<float>(presenter.GetExtent().width), -static_cast<float>(presenter.GetExtent().height)});
     commandBuffer.SetScissor({0, 0}, presenter.GetExtent());
 
-    GetRenderer().DrawOpaque(commandBuffer, frameIndex);
-    terrain->Draw(window->getHandle(), commandBuffer, frameIndex);
-    skybox->Draw(commandBuffer);
-    GetRenderer().DrawTransparent(commandBuffer, frameIndex);
+    GetRenderer().DrawOpaque(commandBuffer, frameIndex,
+        &flyCamera, skybox.get(), directionalLight.get());
+    // terrain->Draw(window->getHandle(), commandBuffer, frameIndex,
+        // &flyCamera, skybox.get(), directionalLight.get());
+    skybox->Draw(commandBuffer, frameIndex,
+        &flyCamera);
+    GetRenderer().DrawTransparent(commandBuffer, frameIndex,
+        &flyCamera, skybox.get(), directionalLight.get());
 
     commandBuffer.EndRendering();
+    commandBuffer.EndRegion();
 
-    // Post Processing Render Pass
+    commandBuffer.BeginRegion("Post Processing");
     presenter.PrepareImageForRendering(commandBuffer, imageIndex);
     postProcessing->PostProcessingRenderPass(commandBuffer, surfaceImageView, presenter.GetExtent());
+    commandBuffer.EndRegion();
+    commandBuffer.BeginRegion("GUI");
     gui->GuiRenderPass(commandBuffer, surfaceImageView, presenter.GetExtent());
+    commandBuffer.EndRegion();
     presenter.PrepareImageForPresentation(commandBuffer, imageIndex);
 
     GetCommandEncoder().SubmitFrame(frameIndex, onRenderFinishedSemaphore);

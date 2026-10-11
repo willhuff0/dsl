@@ -1,9 +1,11 @@
-#include "../Globals.slang"
+#include "../Camera.slang"
+#include "../Environment.slang"
+#include "../DirectionalLight.slang"
 #include "../Fog.slang"
 
-[[vk::binding(0, 0)]] ConstantBuffer<GlobalUniforms> u_global;
+[[vk::binding(0, 0)]] ConstantBuffer<CameraUniforms> u_camera;
 
-[[vk::binding(0, 1)]] Texture2D<float> u_heightMap;
+[[vk::binding(0, 3)]] Texture2D<float> u_heightMap;
 
 [[vk::constant_id(0)]] const uint HEIGHTMAP_SIZE = 4096;
 [[vk::constant_id(1)]] const float METERS_PER_TEXEL = 1.0;
@@ -33,7 +35,7 @@ VertexOutput vs_main(VertexInput input) {
     }
 
     float gridSize = METERS_PER_TEXEL * exp2(snapLod);
-    float2 snappedViewPos = floor(u_global.viewPos.xz / gridSize) * gridSize;
+    float2 snappedViewPos = floor(u_camera.viewPos.xz / gridSize) * gridSize;
 
     float2 worldXZ = snappedViewPos + input.positionXZ;
     int2 worldTexelXZ = int2(floor(worldXZ / METERS_PER_TEXEL + float2(HEIGHTMAP_SIZE / 2.0)));
@@ -44,27 +46,32 @@ VertexOutput vs_main(VertexInput input) {
     float height = u_heightMap.Load(int3(wrapped, 0));
 
     VertexOutput output;
-    output.position = mul(u_global.viewProjMat, float4(worldXZ.x, height, worldXZ.y, 1.0));
+    output.position = mul(u_camera.viewProjMat, float4(worldXZ.x, height, worldXZ.y, 1.0));
     output.worldPosition = float4(worldXZ.x, height, worldXZ.y, 1.0);
     return output;
 }
 
-[[vk::binding(1, 1)]] Texture2D<float4> u_normalMap;
+[[vk::binding(1, 3)]] Texture2D<float4> u_normalMap;
 
 [[vk::constant_id(2)]] const float MATERIAL_TILING = 1.0;
 [[vk::constant_id(3)]] const float AMBIENT_INTENSITY = 1.0;
 
-[[vk::binding(1, 0)]] SamplerState u_environmentSampler;
-[[vk::binding(2, 0)]] TextureCube<float4> u_environmentMap;
-[[vk::binding(3, 0)]] TextureCube<float4> u_irradianceMap;
-[[vk::binding(4, 0)]] TextureCube<float4> u_radianceMap;
-[[vk::binding(5, 0)]] Texture2D<float2> u_brdfLut;
+[[vk::binding(0, 1)]] ConstantBuffer<EnvironmentUniforms> u_environment;
+[[vk::binding(1, 1)]] SamplerState u_environmentSampler;
+[[vk::binding(2, 1)]] TextureCube<float4> u_environmentMap;
+[[vk::binding(3, 1)]] TextureCube<float4> u_irradianceMap;
+[[vk::binding(4, 1)]] TextureCube<float4> u_radianceMap;
+[[vk::binding(5, 1)]] Texture2D<float2> u_brdfLut;
 
-[[vk::binding(2, 1)]] SamplerState u_sampler;
-[[vk::binding(3, 1)]] Texture2D<float4> u_albedoTexture;
-[[vk::binding(4, 1)]] Texture2D<float> u_metallicTexture;
-[[vk::binding(5, 1)]] Texture2D<float> u_roughnessTexture;
-[[vk::binding(6, 1)]] Texture2D<float> u_aoTexture;
+[[vk::binding(0, 2)]] ConstantBuffer<DirectionalLightUniforms> DirectionalLight;
+[[vk::binding(1, 2)]] DepthTexture2DArray CascadedShadowMap;
+[[vk::binding(2, 2)]] SamplerComparisonState CascadedShadowMapSampler;
+
+[[vk::binding(2, 3)]] SamplerState u_sampler;
+[[vk::binding(3, 3)]] Texture2D<float4> u_albedoTexture;
+[[vk::binding(4, 3)]] Texture2D<float> u_metallicTexture;
+[[vk::binding(5, 3)]] Texture2D<float> u_roughnessTexture;
+[[vk::binding(6, 3)]] Texture2D<float> u_aoTexture;
 
 static const float PI = 3.14159265359;
 
@@ -135,17 +142,17 @@ float4 fs_main(VertexOutput input, float3 baryCoord: SV_Barycentrics) : SV_Targe
 
     float2 normalUv = (input.worldPosition.xz / METERS_PER_TEXEL) / float(HEIGHTMAP_SIZE) + 0.5;
     float3 N = normalize(u_normalMap.Sample(u_sampler, normalUv).xyz);
-    float3 V = normalize(u_global.viewPos - input.worldPosition.xyz);
+    float3 V = normalize(u_camera.viewPos - input.worldPosition.xyz);
     float3 R = reflect(-V, N);
 
     float3 Lo = float3(0.0);
 
 // Directional Light
     {
-        float3 L = normalize(float3(0.5, 0.5, 0.5));
+        float3 L = normalize(DirectionalLight.direction);
         float3 H = normalize(V + L);
 
-        float3 radiance = float3(1.0, 0.95, 0.9) * 1.5;
+        float3 radiance = DirectionalLight.color;
 
         float3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
 
@@ -162,6 +169,17 @@ float4 fs_main(VertexOutput input, float3 baryCoord: SV_Barycentrics) : SV_Targe
 
         float NdotL = max(dot(N, L), 0.0);
         Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+
+        float3 shadow = CalculateDirectionalLightShadow(
+            DirectionalLight,
+            CascadedShadowMap,
+            CascadedShadowMapSampler,
+            u_camera.viewMat,
+            input.worldPosition.xyz,
+            N,
+            L);
+
+        Lo *= 1.0 - shadow;
     }
 
     float3 ambient = float3(0.0);
@@ -177,7 +195,7 @@ float4 fs_main(VertexOutput input, float3 baryCoord: SV_Barycentrics) : SV_Targe
         float3 irradiance = u_irradianceMap.Sample(u_environmentSampler, N).rgb;
         float3 diffuse = irradiance * albedo;
 
-        float3 prefilteredColor = u_radianceMap.SampleLevel(u_environmentSampler, R, roughness * float(u_global.radianceMipMapCount)).rgb;
+        float3 prefilteredColor = u_radianceMap.SampleLevel(u_environmentSampler, R, roughness * float(u_environment.radianceMipMapCount)).rgb;
         float2 envBrdf = u_brdfLut.Sample(u_environmentSampler, float2(max(dot(N, V), 0.0), roughness)).rg;
         float3 specular = prefilteredColor * (F0 * envBrdf.x + envBrdf.y);
 
@@ -189,7 +207,7 @@ float4 fs_main(VertexOutput input, float3 baryCoord: SV_Barycentrics) : SV_Targe
     color = ApplyDistanceFog(
         color,
         input.worldPosition.xyz,
-        u_global.viewPos,
+        u_camera.viewPos,
         u_environmentSampler,
         u_environmentMap
     );
