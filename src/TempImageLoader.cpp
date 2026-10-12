@@ -42,15 +42,17 @@ static vk::Format convertResFormat(int channels, Data::Image::CompressionMode co
 
 dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::Image& image, bool generateMipMaps) {
     uint32_t mipLevelCount;
+    vk::ImageUsageFlags usage = vk::ImageUsageFlagBits::eSampled;
     if (generateMipMaps) {
         mipLevelCount = static_cast<uint32_t>(std::floor(std::log2(std::max(image.width, image.height)))) + 1;
+        usage |= vk::ImageUsageFlagBits::eTransferSrc;
     } else {
         mipLevelCount = 1;
     }
 
     auto texture = dvk::Texture::Create(GetDevice())
         .SetLabel(label)
-        .SetUsage(vk::ImageUsageFlagBits::eSampled)
+        .SetUsage(usage)
         .SetFormat(convertResFormat(image.channels, image.compressionMode, image.colorSpace))
         .SetExtent({ static_cast<uint32_t>(image.width), static_cast<uint32_t>(image.height), 1 })
         .SetMipLevelCount(mipLevelCount)

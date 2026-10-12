@@ -53,6 +53,7 @@ target_sources(dsl
         src/Gui.cpp
         src/DirectionalLight.cpp
         src/CascadedShadowMap.cpp
+        src/StaticBufferGroup.cpp
     PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
@@ -85,6 +86,7 @@ target_sources(dsl
         include/DirectionalLight.hpp
         include/CascadedShadowMap.hpp
         include/BindingProvider.hpp
+        include/StaticBufferGroup.hpp
 )
 
 target_include_directories(dsl

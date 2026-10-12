@@ -17,8 +17,8 @@ struct MeshMetadata {
     int32_t vertexOffset;
     uint32_t shaderIndex;
 
-    float3 aabbMin;
-    float3 aabbMax;
+    float3 boundingSphereCenter;
+    float boundingSphereRadius;
 };
 
 struct IndirectCommand {

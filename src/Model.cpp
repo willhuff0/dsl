@@ -16,16 +16,17 @@
 #include <utility>
 #include <vector>
 
-static constexpr uint32_t IMPORT_FLAGS =
-    aiProcess_Triangulate |
-    aiProcess_GenNormals |
-    aiProcess_CalcTangentSpace |
-    aiProcess_JoinIdenticalVertices |
-    aiProcess_OptimizeMeshes |
-    aiProcess_OptimizeGraph |
-    aiProcess_ImproveCacheLocality |
-    aiProcess_FindInvalidData |
-    aiProcess_FindDegenerates;
+static constexpr uint32_t IMPORT_FLAGS = aiProcess_GenBoundingBoxes;
+    // aiProcess_Triangulate |
+    // aiProcess_GenNormals |
+    // aiProcess_GenBoundingBoxes |
+    // aiProcess_CalcTangentSpace |
+    // aiProcess_JoinIdenticalVertices |
+    // aiProcess_OptimizeMeshes |
+    // aiProcess_OptimizeGraph |
+    // aiProcess_ImproveCacheLocality |
+    // aiProcess_FindInvalidData |
+    // aiProcess_FindDegenerates;
 
 using AiTextureIndex = uint32_t;
 using AiMaterialIndex = uint32_t;
@@ -443,6 +444,23 @@ static std::pair<MeshIndex, MaterialIndex> loadMesh(
 
         desc.vertices.emplace_back(vertex);
     }
+
+    aiVector3D aabbMin = mesh->mAABB.mMin;
+    aiVector3D aabbMax = mesh->mAABB.mMax;
+
+    glm::vec3 aabbCenter = {
+        (aabbMin.x + aabbMax.x) / 2.0f,
+        (aabbMin.y + aabbMax.y) / 2.0f,
+        (aabbMin.z + aabbMax.z) / 2.0f,
+    };
+    glm::vec3 aabbExtent = {
+        aabbMax.x - aabbCenter.x,
+        aabbMax.y - aabbCenter.y,
+        aabbMax.z - aabbCenter.z,
+    };
+    float radius = std::sqrt(aabbExtent.x * aabbExtent.x + aabbExtent.y * aabbExtent.y + aabbExtent.z * aabbExtent.z);
+    desc.boundingSphereCenter = aabbCenter;
+    desc.boundingSphereRadius = radius;
 
     MeshIndex rendererMeshIndex = GetRenderer().AddMesh(context.commandBuffer, context.frameIndex, rendererShaderIndex, desc);
     context.meshes.emplace(aiMeshIndex, rendererMeshIndex);

@@ -16,6 +16,11 @@ struct DirectionalLightUniforms {
     uint32_t shadowMapSize;
 }
 
+float blockSum(float4 g, float2 wx, float2 wy) {
+    return g.w * wx.x * wy.x + g.z * wx.y * wy.x
+         + g.x * wx.x * wy.y + g.y * wx.y * wy.y;
+}
+
 float3 sampleShadowCascade(
     DirectionalLightUniforms directionalLight,
     DepthTexture2DArray cascadedShadowMap,
@@ -47,22 +52,47 @@ float3 sampleShadowCascade(
 
     float2 texelSize = 1.0 / float2(directionalLight.shadowMapSize);
 
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float2 sampleUV = uv + float2(x, y) * texelSize;
+    // float shadow = 0.0;
+    // for (int x = -1; x <= 1; x++) {
+    //     for (int y = -1; y <= 1; y++) {
+    //         float2 sampleUV = uv + float2(x, y) * texelSize;
 
-            float visibility = cascadedShadowMap.SampleCmpLevelZero(
-                cascadedShadowMapSampler,
-                float3(sampleUV, float(cascadeIndex)),
-                ndc.z - bias
-            );
+    //         float visibility = cascadedShadowMap.SampleCmpLevelZero(
+    //             cascadedShadowMapSampler,
+    //             float3(sampleUV, float(cascadeIndex)),
+    //             ndc.z - bias
+    //         );
 
-            shadow += 1.0 - visibility;
-        }
-    }
+    //         shadow += 1.0 - visibility;
+    //     }
+    // }
+    // shadow /= 9.0;
 
-    shadow /= 9.0;
+    float2 texelPos = uv * float(directionalLight.shadowMapSize) - 0.5;
+    float2 base = floor(texelPos);
+    float2 f = texelPos - base;
+
+    // Center of the 2x2 block {base, base+1}; this is a texel *corner*, so the
+    // hardware's floor() is 0.5 texel from any rounding boundary.
+    float2 c = (base + 1.0) * texelSize;
+    float z = ndc.z - bias;
+
+    float4 g00 = cascadedShadowMap.GatherCmp(cascadedShadowMapSampler, float3(c + float2(-1, -1) * texelSize, cascadeIndex), z);
+    float4 g10 = cascadedShadowMap.GatherCmp(cascadedShadowMapSampler, float3(c + float2(1, -1) * texelSize, cascadeIndex), z);
+    float4 g01 = cascadedShadowMap.GatherCmp(cascadedShadowMapSampler, float3(c + float2(-1, 1) * texelSize, cascadeIndex), z);
+    float4 g11 = cascadedShadowMap.GatherCmp(cascadedShadowMapSampler, float3(c + float2(1, 1) * texelSize, cascadeIndex), z);
+
+    // Per-axis weights for the 4 columns/rows (base-1, base, base+1, base+2)
+    float2 wxL = float2(1.0 - f.x, 1.0); // left block  (base-1, base)
+    float2 wxR = float2(1.0, f.x);       // right block (base+1, base+2)
+    float2 wyT = float2(1.0 - f.y, 1.0); // upper block (rows base-1, base)
+    float2 wyB = float2(1.0, f.y);       // lower block (rows base+1, base+2)
+
+    float visibility =
+        blockSum(g00, wxL, wyT) + blockSum(g10, wxR, wyT) +
+        blockSum(g01, wxL, wyB) + blockSum(g11, wxR, wyB);
+
+    float shadow = 1.0 - visibility / 9.0;
 
     if (SHOW_CASCADES) {
         if (cascadeIndex == 0) {

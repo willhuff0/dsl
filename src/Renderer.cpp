@@ -334,6 +334,8 @@ MeshIndex Renderer::AddMesh(dvk::CommandBuffer& commandBuffer, uint32_t frameInd
         .firstIndex = _indexCount,
         .vertexOffset = _vertexCount,
         .shaderIndex = shader,
+        .boundingSphereCenter = meshDesc.boundingSphereCenter,
+        .boundingSphereRadius = meshDesc.boundingSphereRadius,
     };
 
     _indexCount += meshDesc.indices.size();
@@ -853,6 +855,8 @@ void Renderer::_computeShaderToCommandIndexOffsets(uint32_t frameIndex) {
 }
 
 void Renderer::_writeDynamicInstanceFrameData(uint32_t frameIndex) {
+    if (_dynamicInstanceFrameDataStaging.empty()) return;
+
     std::erase_if(_dynamicInstanceIndexToComponent, [](const std::weak_ptr<InstanceComponent>& component) {
         return component.expired();
     });

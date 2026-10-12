@@ -72,7 +72,7 @@ FlyCamera::FlyCamera(GLFWwindow* window, glm::vec3 startPos) : window(window), p
         .SetLabel("[Camera] Bind Set Layout")
         .AddEntry(0)
             .SetType(vk::DescriptorType::eUniformBuffer)
-            .SetStage(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment)
+            .SetStage(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute)
             .FinishEntry()
         .Build();
 

@@ -75,6 +75,9 @@ constexpr auto RENDERER_VERTEX_ATTRIBUTES = {
 struct MeshDesc {
     std::vector<uint32_t> indices;
     std::vector<VertexDesc> vertices;
+
+    glm::vec3 boundingSphereCenter;
+    float boundingSphereRadius;
 };
 
 struct MeshMetadata {
@@ -84,10 +87,9 @@ struct MeshMetadata {
 
     uint32_t shaderIndex;
 
-    alignas(16) glm::vec3 aabbMin;
-    alignas(16) glm::vec3 aabbMax;
+    glm::vec3 boundingSphereCenter;
+    float boundingSphereRadius;
 };
-static_assert(sizeof(MeshMetadata) == 48);
 
 struct InstanceDesc {
     MeshIndex meshIndex;
