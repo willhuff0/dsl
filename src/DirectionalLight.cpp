@@ -304,7 +304,7 @@ void DirectionalLight::DrawShadowMap(dvk::CommandBuffer& commandBuffer, uint32_t
         //     {static_cast<float>(_shadowMap.GetSize()), static_cast<float>(_shadowMap.GetSize())});
         commandBuffer.SetScissor({0, 0}, {_shadowMap.GetSize(), _shadowMap.GetSize()});
 
-        // GetRenderer().DrawForShadows(commandBuffer, frameIndex, &camera);
+        GetRenderer().DrawDepthOnly(commandBuffer, frameIndex, &camera, true);
 
         commandBuffer.EndRendering();
         commandBuffer.EndRegion();

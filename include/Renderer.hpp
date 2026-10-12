@@ -153,10 +153,11 @@ public:
         BindingProvider* cameraProvider,
         BindingProvider* environmentProvider,
         BindingProvider* directionalLightProvider);
-    void DrawForShadows(
+    void DrawDepthOnly(
         dvk::CommandBuffer& commandBuffer,
         uint32_t frameIndex,
-        BindingProvider* cameraProvider);
+        BindingProvider* cameraProvider,
+        bool forShadows);
 
     [[nodiscard]] dvk::BindSetLayout::Ref GetStaticBindSetLayout() const;
     [[nodiscard]] dvk::BindSetLayout::Ref GetPerFrameBindSetLayout() const;
@@ -223,6 +224,7 @@ private:
     dvk::Sampler::Ref _defaultSampler;
 
     Watcher _depthOnlyPipelineWatcher;
+    dvk::GraphicsPipeline::Ref _shadowPipeline;
     dvk::GraphicsPipeline::Ref _depthOnlyPipeline;
 
     void _setNeedRebindMeshMetadata();

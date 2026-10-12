@@ -157,14 +157,14 @@ Terrain::Terrain(
     sampler = dvk::Sampler::Create(GetDevice())
         .SetLabel("Terrain Material Sampler")
         .SetAddressMode(vk::SamplerAddressMode::eRepeat)
-        .SetAnisotropy(false, 1.0f)
+        .SetAnisotropy(true, 8.0f)
         .SetLodBounds(0.0f, 32.0f)
         .SetBorderColor(vk::BorderColor::eFloatTransparentBlack)
         .Build();
-    albedoTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Albedo", LoadImage(TERRAIN_ALBEDO_TEXTURE_PATH, 4, Data::Image::ColorSpace::SRGB))).Build();
-    metallicTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Metallic", LoadImage(TERRAIN_METALLIC_TEXTURE_PATH, 1))).Build();
-    roughnessTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Roughness", LoadImage(TERRAIN_ROUGHNESS_TEXTURE_PATH, 1))).Build();
-    aoTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain AO", LoadImage(TERRAIN_AO_TEXTURE_PATH, 1))).Build();
+    albedoTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Albedo", LoadImage(TERRAIN_ALBEDO_TEXTURE_PATH, 4, Data::Image::ColorSpace::SRGB), true)).Build();
+    metallicTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Metallic", LoadImage(TERRAIN_METALLIC_TEXTURE_PATH, 1), true)).Build();
+    roughnessTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain Roughness", LoadImage(TERRAIN_ROUGHNESS_TEXTURE_PATH, 1), true)).Build();
+    aoTextureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage("Terrain AO", LoadImage(TERRAIN_AO_TEXTURE_PATH, 1), true)).Build();
 
     graphicsBindSet = dvk::BindSet::Create(GetDevice(), GetBindPool(), graphicsBindSetLayout, "Terrain Graphics");
     dvk::Binder()

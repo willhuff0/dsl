@@ -245,7 +245,7 @@ static TextureIndex loadEmbeddedTexture(
             desiredChannelCount);
     }
 
-    auto textureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage(label, image)).Build();
+    auto textureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage(label, image, true)).Build();
     auto rendererTextureIndex = GetRenderer().AddTexture(textureView);
     context.embeddedTextures.emplace(aiTextureIndex, rendererTextureIndex);
     return rendererTextureIndex;
@@ -268,7 +268,7 @@ static TextureIndex loadExternalTexture(
         desiredChannelCount,
         colorSpace);
 
-    auto textureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage(label, image)).Build();
+    auto textureView = dvk::TextureView::Create(GetDevice(), CreateTextureFromImage(label, image, true)).Build();
     auto rendererTextureIndex = GetRenderer().AddTexture(textureView);
     context.externalTextures.emplace(path, rendererTextureIndex);
     return rendererTextureIndex;

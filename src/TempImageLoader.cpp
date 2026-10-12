@@ -40,12 +40,20 @@ static vk::Format convertResFormat(int channels, Data::Image::CompressionMode co
     }
 }
 
-dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::Image& image) {
+dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::Image& image, bool generateMipMaps) {
+    uint32_t mipLevelCount;
+    if (generateMipMaps) {
+        mipLevelCount = static_cast<uint32_t>(std::floor(std::log2(std::max(image.width, image.height)))) + 1;
+    } else {
+        mipLevelCount = 1;
+    }
+
     auto texture = dvk::Texture::Create(GetDevice())
         .SetLabel(label)
         .SetUsage(vk::ImageUsageFlagBits::eSampled)
         .SetFormat(convertResFormat(image.channels, image.compressionMode, image.colorSpace))
         .SetExtent({ static_cast<uint32_t>(image.width), static_cast<uint32_t>(image.height), 1 })
+        .SetMipLevelCount(mipLevelCount)
         .EnableWriteWithStaging()
         .Build();
 
@@ -60,10 +68,18 @@ dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::I
             rgba[i * 4 + 2] = rgb[i * 3 + 2];
             rgba[i * 4 + 3] = 255;
         }
-        texture->WriteWithStaging(GetCommandEncoder(), rgba, image.width * image.height * 4);
+        if (generateMipMaps) {
+            texture->WriteWithStagingAndGenerateMipMaps(GetCommandEncoder(), rgba, image.width * image.height * 4, mipLevelCount);
+        } else {
+            texture->WriteWithStaging(GetCommandEncoder(), rgba, image.width * image.height * 4);
+        }
         delete[] rgba;
     } else {
-        texture->WriteWithStaging(GetCommandEncoder(), image.data.get(), image.size);
+        if (generateMipMaps) {
+            texture->WriteWithStagingAndGenerateMipMaps(GetCommandEncoder(), image.data.get(), image.size, mipLevelCount);
+        } else {
+            texture->WriteWithStaging(GetCommandEncoder(), image.data.get(), image.size);
+        }
     }
     return texture;
 }

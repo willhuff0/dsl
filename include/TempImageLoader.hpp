@@ -6,7 +6,7 @@
 
 #include <string>
 
-dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::Image& image);
+dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::Image& image, bool generateMipMaps);
 
 Data::Image LoadImage(unsigned char* data, int size, int channels = 0, Data::Image::ColorSpace colorSpace = Data::Image::ColorSpace::Linear);
 Data::Image LoadImage(const std::string& path, int channels = 0, Data::Image::ColorSpace colorSpace = Data::Image::ColorSpace::Linear);

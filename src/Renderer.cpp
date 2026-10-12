@@ -211,6 +211,7 @@ Renderer::Renderer(BindingProvider* cameraProvider)
     _defaultSampler = dvk::Sampler::Create(GetDevice())
         .SetLabel("[Mesh Renderer] Default Sampler")
         .SetAddressMode(vk::SamplerAddressMode::eRepeat)
+        .SetAnisotropy(true, 8.0f)
         .Build();
     dvk::Binder()
         .BindSampler(1)
@@ -227,14 +228,25 @@ Renderer::Renderer(BindingProvider* cameraProvider)
         .Build();
     _depthOnlyPipelineWatcher = ShaderHotReload::CreateAndWatch(RENDERER_DEPTH_ONLY_SHADER_PATH, [this, depthOnlyPipelineLayout](const auto& path) {
         auto depthOnlyShader = dvk::Shader::LoadFile(GetDevice(), path, "[Mesh Renderer] Depth Only Module");
-        _depthOnlyPipeline = dvk::GraphicsPipeline::Create(GetDevice(), depthOnlyPipelineLayout)
-            .SetLabel("[Mesh Renderer] Depth Only Pipeline")
+        _shadowPipeline = dvk::GraphicsPipeline::Create(GetDevice(), depthOnlyPipelineLayout)
+            .SetLabel("[Mesh Renderer] Shadow Depth Pipeline")
             .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
             .SetRasterizer()
                 .SetCullMode(vk::CullModeFlagBits::eFront)
                 .FinishRasterizer()
             .AddStage(vk::ShaderStageFlagBits::eVertex, depthOnlyShader, "VertexMain").FinishStage()
             .EnableDepth(SHADOW_DEPTH_FORMAT)
+            .Build();
+        _depthOnlyPipeline = dvk::GraphicsPipeline::Create(GetDevice(), depthOnlyPipelineLayout)
+            .SetLabel("[Mesh Renderer] Depth Only Pipeline")
+            .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
+            .AddStage(vk::ShaderStageFlagBits::eVertex, depthOnlyShader, "VertexMain").FinishStage()
+            .SetDepth()
+                .SetFormat(GetDepthFormat())
+                .SetDepthCompare(vk::CompareOp::eLess)
+                .EnableDepthTest()
+                .EnableDepthWrite()
+                .FinishDepth()
             .Build();
     });
 }
@@ -585,14 +597,15 @@ void Renderer::DrawTransparent(
     }
 }
 
-void Renderer::DrawForShadows(
+void Renderer::DrawDepthOnly(
     dvk::CommandBuffer& commandBuffer,
     uint32_t frameIndex,
-    BindingProvider* cameraProvider
+    BindingProvider* cameraProvider,
+    bool forShadows
 ) {
     if (_numOpaqueShaderPasses == 0) return;
 
-    commandBuffer.SetGraphicsPipeline(_depthOnlyPipeline);
+    commandBuffer.SetGraphicsPipeline(forShadows ? _shadowPipeline : _depthOnlyPipeline);
 
     commandBuffer.SetVertexBuffer(0, _vertexArray.GetBuffer());
     commandBuffer.SetIndexBuffer(_indexArray.GetBuffer());

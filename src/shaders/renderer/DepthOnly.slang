@@ -29,7 +29,9 @@ VertexOutput VertexMain(
         instanceFrameData = StaticInstanceFrameDatas[instance.frameDataIndex];
     }
 
+    float4 position = mul(instanceFrameData.modelMat, float4(input.position, 1.0));
+
     VertexOutput output;
-    output.projectedPosition = mul(Camera.viewProjMat, mul(instanceFrameData.modelMat, float4(input.position, 1.0)));
+    output.projectedPosition = mul(Camera.viewProjMat, position);
     return output;
 }
