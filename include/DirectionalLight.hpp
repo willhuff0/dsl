@@ -8,11 +8,11 @@ class DirectionalLight : public BindingProvider {
 public:
     DirectionalLight(
         BindingProvider* cameraProvider,
-        glm::vec3 direction = normalize(glm::vec3(20.0f, 15.0f, 20.0f)),
+        glm::vec3 direction = normalize(glm::vec3(-1.0f, 15.0f, -10.0f)),
         glm::vec3 color = glm::vec3(1.0f, 1.0f, 0.98f) * 8.0f,
         uint32_t shadowMapSize = 4096,
         uint32_t cascadeCount = 4,
-        std::vector<float> cascadePortions = {0.0f, 1.0f / 120.0f, 1.0f / 40.0f, 1.0f / 10.0f, 1.0f / 2.0f}
+        std::vector<float> cascadePortions = {0.0, 0.005, 0.025, 0.125, 0.625}
     );
 
     void RegenerateLightSpaceMatrices(

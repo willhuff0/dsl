@@ -70,14 +70,14 @@ dvk::Texture::Ref CreateTextureFromImage(const std::string& label, const Data::I
             rgba[i * 4 + 2] = rgb[i * 3 + 2];
             rgba[i * 4 + 3] = 255;
         }
-        if (generateMipMaps) {
+        if (generateMipMaps && mipLevelCount > 1) {
             texture->WriteWithStagingAndGenerateMipMaps(GetCommandEncoder(), rgba, image.width * image.height * 4, mipLevelCount);
         } else {
             texture->WriteWithStaging(GetCommandEncoder(), rgba, image.width * image.height * 4);
         }
         delete[] rgba;
     } else {
-        if (generateMipMaps) {
+        if (generateMipMaps && mipLevelCount > 1) {
             texture->WriteWithStagingAndGenerateMipMaps(GetCommandEncoder(), image.data.get(), image.size, mipLevelCount);
         } else {
             texture->WriteWithStaging(GetCommandEncoder(), image.data.get(), image.size);

@@ -6,7 +6,7 @@
 #include "HotReload.hpp"
 #include "FlyCamera.hpp"
 #include "PostProcessing.hpp"
-#include "Terrain.hpp"
+#include "terrain/Terrain.hpp"
 #include "Skybox.hpp"
 #include "DirectionalLight.hpp"
 #include "Model.hpp"

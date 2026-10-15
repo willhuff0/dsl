@@ -2,9 +2,12 @@
 
 #include "Renderer.hpp"
 #include "BindingProvider.hpp"
+#include "utils/UploadQueue.hpp"
+#include "Physics.hpp"
 
 #include <utility>
 #include <optional>
+
 
 static Platform* platformBackend;
 static dvk::Instance* graphicsInstance;
@@ -23,6 +26,11 @@ static dvk::BindSet::Ref debugTextureBindSet;
 static dvk::TextureView::Ref debugTextureView;
 
 static std::optional<Renderer> renderer;
+static std::optional<UploadQueue> uploadQueue;
+
+static std::optional<Physics> physics;
+
+static constexpr vk::DeviceSize UPLOAD_STAGING_SIZE = 64ull * 1024 * 1024;
 
 static vk::SampleCountFlagBits getMaxUsableSampleCount() {
     vk::PhysicalDeviceProperties physicalDeviceProperties = GetDevice().GetPhysicalDevice().getProperties();
@@ -57,6 +65,9 @@ void SetupProvider(Platform* platform, dvk::Instance* instance, dvk::Device* dev
 
     sampleCount = getMaxUsableSampleCount();
 
+    uploadQueue.emplace(GetDevice(), UPLOAD_STAGING_SIZE);
+    physics.emplace();
+
     debugTextureBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
         .SetLabel("Debug Texture Blit")
         .AddEntry(0)
@@ -73,6 +84,8 @@ void SetupRenderer(BindingProvider* cameraProvider) {
 
 void FreeProvider() {
     renderer = std::nullopt;
+    // After the renderer, whose static buffers may still be referenced by in-flight uploads.
+    uploadQueue = std::nullopt;
 
     debugTextureBindSetLayout = nullptr;
     debugTextureBindSet = nullptr;
@@ -107,5 +120,13 @@ const dvk::BindSet::Ref& GetDebugTextureBindSet() { return debugTextureBindSet; 
 
 Renderer& GetRenderer() {
     return renderer.value();
+}
+
+UploadQueue& GetUploadQueue() {
+    return uploadQueue.value();
+}
+
+Physics& GetPhysics() {
+    return physics.value();
 }
 

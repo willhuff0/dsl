@@ -22,6 +22,10 @@
         "glfw-binding",
         "vulkan-binding"
       ]
+    },
+    {
+      "name": "box3d",
+      "version>=": "0.1.0"
     }
   ]
 }

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "utils/GrowingBuffer.hpp"
+#include "utils/ChunkedBuffer.hpp"
+#include "utils/UploadQueue.hpp"
 #include "ShaderHotReload.hpp"
 #include "Provider.hpp"
 #include "BindingProvider.hpp"
@@ -11,6 +12,7 @@
 #include <memory>
 #include <utility>
 #include <optional>
+#include <mutex>
 
 class InstanceComponent;
 
@@ -115,34 +117,47 @@ struct ShaderPass {
     dvk::GraphicsPipeline::Ref pipeline;
     bool isTransparent;
 
-    uint32_t numMaterials = 0;
-    GrowingBuffer materials;
-    dvk::BindSet::Refs<FRAMES_IN_FLIGHT> bindSet;
-
-    std::array<bool, FRAMES_IN_FLIGHT> needRebindMaterials{};
-
-    void SetNeedRebindMaterials();
+    std::unique_ptr<ChunkedBuffer> materials;
+    dvk::BindSet::Ref bindSet;
 };
 
+// Static scene data (vertices, indices, mesh metadata, instances, materials) lives in device-local
+// ChunkedBuffers and is uploaded asynchronously through the UploadQueue. Anything added is only drawn once all
+// of the uploads it depends on have completed. Removal is deferred until no frame in flight can reference it.
+//
+// Thread safety: AddMaterial, AddMesh, AddInstance and the Remove functions may be called from any thread.
+// AddShader, SetShaderPipeline, AddTexture, AddSampler and everything per-frame are render-thread only.
 class Renderer {
 public:
     Renderer(BindingProvider* cameraProvider);
 
-    ShaderIndex AddShader(const dvk::GraphicsPipeline::Ref& pipeline, bool isTransparent = false, const std::string& name = "");
+    ShaderIndex AddShader(const dvk::GraphicsPipeline::Ref& pipeline, vk::DeviceSize materialSize, bool isTransparent = false, const std::string& name = "");
     void SetShaderPipeline(uint32_t frameIndex, ShaderIndex shader, const dvk::GraphicsPipeline::Ref& pipeline);
     TextureIndex AddTexture(const dvk::TextureView::Ref& textureView);
     SamplerIndex AddSampler(const dvk::Sampler::Ref& sampler);
-    MaterialIndex AddMaterial(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const void* src, uint64_t size);
-    MeshIndex AddMesh(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const MeshDesc& meshDesc);
-    std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> AddInstance(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc);
+    MaterialIndex AddMaterial(ShaderIndex shader, const void* src, vk::DeviceSize size);
+    MeshIndex AddMesh(ShaderIndex shader, const MeshDesc& meshDesc);
+    InstanceIndex AddInstance(const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc);
 
-    void UploadWorldState(
-        dvk::CommandBuffer& commandBuffer,
-        uint32_t frameIndex);
+    // Removal takes effect at the start of the next frame. Remove a mesh's instances before the mesh, and
+    // stop using a material before removing it. Dynamic instances are also removed automatically once their
+    // component is destroyed.
+    void RemoveInstance(InstanceIndex instance);
+    void RemoveMesh(MeshIndex mesh);
+    void RemoveMaterial(ShaderIndex shader, MaterialIndex material);
+
+    // Call first each frame, after dvk::CommandEncoder::GetNextFrame().
+    void UploadWorldState(uint32_t frameIndex);
+    // The frame's submit must wait on the upload timeline at this value. See UploadQueue::GetWaitInfo.
+    [[nodiscard]] UploadTicket GetPublishedUploads() const;
+
+    // Shadow cascades pass cullNearPlane = false: casters between the light and the cascade must still be
+    // drawn, and the depth-clamped shadow pipeline flattens them onto the near plane.
     void ComputeDrawCommands(
         dvk::CommandBuffer& commandBuffer,
         uint32_t frameIndex,
-        BindingProvider* cameraProvider);
+        BindingProvider* cameraProvider,
+        bool cullNearPlane = true);
     void DrawOpaque(
         dvk::CommandBuffer& commandBuffer,
         uint32_t frameIndex,
@@ -167,6 +182,41 @@ public:
     [[nodiscard]] dvk::BindSetLayout::Ref GetTexturesBindSetLayout() const;
 
 private:
+    struct MeshRecord {
+        bool live = false;
+        ShaderIndex shader = NULL_INDEX;
+        ChunkedBuffer::Allocation vertices;
+        ChunkedBuffer::Allocation indices;
+        ChunkedBuffer::Allocation metadata;
+        uint32_t instanceRefs = 0;
+        UploadTicket ticket;
+    };
+
+    struct MaterialRecord {
+        bool live = false;
+        ChunkedBuffer::Allocation allocation;
+        UploadTicket ticket;
+    };
+
+    struct InstanceRecord {
+        bool live = false;
+        bool published = false;
+        MeshIndex mesh = NULL_INDEX;
+        ChunkedBuffer::Allocation instance;
+        // Empty for dynamic instances.
+        ChunkedBuffer::Allocation staticFrameData;
+        DynamicFrameDataIndex dynamicSlot = NULL_INDEX;
+        // Index into _activeInstances while published.
+        uint32_t activePosition = NULL_INDEX;
+        // Covers the instance's own uploads plus its mesh's and material's.
+        UploadTicket ticket;
+    };
+
+    struct DynamicSlot {
+        std::weak_ptr<InstanceComponent> component;
+        InstanceIndex instance = NULL_INDEX;
+    };
+
     dvk::BindPool::Ref _bindPool;
 
     dvk::BindSetLayout::Ref _staticBindSetLayout;
@@ -174,21 +224,14 @@ private:
     dvk::BindSetLayout::Ref _shaderPassBindSetLayout;
     dvk::BindSetLayout::Ref _texturesBindSetLayout;
 
-    int32_t _vertexCount = 0;
-    uint32_t _indexCount = 0;
-    GrowingBuffer _vertexArray;
-    GrowingBuffer _indexArray;
-    dvk::BindSet::Ref _texturesSamplersBindSet;
+    UploadQueue& _uploadQueue;
+    std::unique_ptr<ChunkedBuffer> _vertices;
+    std::unique_ptr<ChunkedBuffer> _indices;
+    std::unique_ptr<ChunkedBuffer> _meshMetadata;
+    std::unique_ptr<ChunkedBuffer> _instances;
+    std::unique_ptr<ChunkedBuffer> _staticInstanceFrameData;
 
-    std::array<bool, FRAMES_IN_FLIGHT> _needRebindMeshMetadata{};
-    std::array<bool, FRAMES_IN_FLIGHT> _needRebindInstances{};
-    std::array<bool, FRAMES_IN_FLIGHT> _needRebindStaticInstanceFrameData{};
-    uint32_t _numMeshes = 0;
-    uint32_t _numStaticInstances = 0;
-    uint32_t _numDynamicInstances = 0;
-    GrowingBuffer _meshMetadata;
-    GrowingBuffer _instances;
-    GrowingBuffer _staticInstanceFrameData;
+    dvk::BindSet::Ref _texturesSamplersBindSet;
     dvk::BindSet::Refs<FRAMES_IN_FLIGHT> _staticBindSet;
 
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _dynamicInstanceFrameData;
@@ -198,6 +241,7 @@ private:
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _shaderToCommandIndexOffsets;
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _drawCounts;
     dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _compactedCommands;
+    dvk::Buffer::Refs<FRAMES_IN_FLIGHT> _activeInstanceIndices;
     dvk::BindSet::Refs<FRAMES_IN_FLIGHT> _perFrameBindSet;
 
     Watcher _computePass1Watcher;
@@ -205,15 +249,31 @@ private:
     Watcher _computePass2Watcher;
     dvk::ComputePipeline::Ref _computePass2Pipeline;
 
-    // Refs
+    // Guards everything from here to the render-thread-only section.
+    mutable std::mutex _mutex;
+    std::vector<MeshRecord> _meshes;
+    // Indexed by shader, then material.
+    std::vector<std::vector<MaterialRecord>> _materials;
+    std::vector<InstanceRecord> _instanceRecords;
+    std::vector<DynamicSlot> _dynamicSlots;
+    std::vector<DynamicFrameDataIndex> _freeDynamicSlots;
+    std::vector<InstanceIndex> _pendingInstances;
+    std::vector<InstanceIndex> _removedInstances;
+    std::vector<MeshIndex> _removedMeshes;
+    std::vector<std::pair<ShaderIndex, MaterialIndex>> _removedMaterials;
+    uint32_t _meshSlotHighWater = 0;
+    std::vector<uint32_t> _shaderToLiveMeshCount;
+    // Published instances, in no particular order. The cull pass runs over this list.
+    std::vector<uint32_t> _activeInstances;
+    std::vector<uint32_t> _meshToActiveInstanceCount;
+
+    // Render thread only. Snapshots taken in UploadWorldState for the rest of the frame.
+    UploadTicket _publishedUploads;
+    uint32_t _numMeshSlots = 0;
+    uint32_t _numActiveInstances = 0;
+    std::vector<uint32_t> _activeInstancesStaging;
     std::vector<InstanceFrameData> _dynamicInstanceFrameDataStaging;
-    std::vector<std::weak_ptr<InstanceComponent>> _dynamicInstanceIndexToComponent;
-
-    bool _needRecomputeInstanceIndexOffsets = true;
-    std::vector<uint32_t> _meshToMaxInstanceCount;
     std::vector<uint32_t> _meshToInstanceIndexOffsetsStaging;
-
-    bool _needRecomputeCommandIndexOffsets = true;
     std::vector<uint32_t> _shaderToMaxMeshCount;
     std::vector<uint32_t> _shaderToCommandIndexOffsetsStaging;
 
@@ -229,9 +289,10 @@ private:
     dvk::GraphicsPipeline::Ref _shadowPipeline;
     dvk::GraphicsPipeline::Ref _depthOnlyPipeline;
 
-    void _setNeedRebindMeshMetadata();
-    void _setNeedRebindInstances();
-    void _setNeedRebindStaticInstanceFrameData();
+    void _processRemovalsLocked();
+    void _publishCompletedLocked();
+    void _activateLocked(InstanceIndex instance);
+    void _deactivateLocked(InstanceIndex instance);
 
     bool _maybeResizeDynamicInstanceFrameData(uint32_t frameIndex, dvk::Binder& binder);
     bool _maybeResizeMeshToInstanceIndexOffsets(uint32_t frameIndex, dvk::Binder& binder);
@@ -240,9 +301,8 @@ private:
     bool _maybeResizeShaderToCommandIndexOffsets(uint32_t frameIndex, dvk::Binder& binder);
     bool _maybeResizeDrawCounts(uint32_t frameIndex, dvk::Binder& binder);
     bool _maybeResizeCompactedCommands(uint32_t frameIndex, dvk::Binder& binder);
+    bool _maybeResizeActiveInstanceIndices(uint32_t frameIndex, dvk::Binder& binder);
 
     void _computeMeshToInstanceIndexOffsets(uint32_t frameIndex);
     void _computeShaderToCommandIndexOffsets(uint32_t frameIndex);
-
-    void _writeDynamicInstanceFrameData(uint32_t frameIndex);
 };

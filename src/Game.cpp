@@ -3,11 +3,15 @@
 #include <Provider.hpp>
 #include <utils/Paths.hpp>
 #include <TempImageLoader.hpp>
+#include <utils/UploadQueue.hpp>
 
 #include <imgui.h>
 
 #include <utility>
 #include <filesystem>
+
+#include "Physics.hpp"
+#include "components/PhysicsComponent.hpp"
 
 constexpr std::chrono::milliseconds MIN_SHADER_RECOMPILE_INTERVAL(500);
 
@@ -22,11 +26,11 @@ Game::Game(Platform* platform, Window::Ref window, dvk::Surface& surface, dvk::P
     skybox = std::make_unique<Skybox>(Skybox::FromEquirectangularMap(&flyCamera, LoadHDRI(SKYBOX_HDRI_PATH)));
     directionalLight = std::make_unique<DirectionalLight>(&flyCamera);
     SetupRenderer(&flyCamera);
-    // terrain = std::make_unique<Terrain>(
-    //     &flyCamera,
-    //     skybox.get(),
-    //     directionalLight.get()
-    // );
+    terrain = std::make_unique<Terrain>(
+        &flyCamera,
+        skybox.get(),
+        directionalLight.get()
+    );
     modelLoader = std::make_unique<ModelLoader>(
         &flyCamera,
         skybox.get(),
@@ -34,7 +38,10 @@ Game::Game(Platform* platform, Window::Ref window, dvk::Surface& surface, dvk::P
     );
     GetCommandEncoder().ExecuteAndWait([&](dvk::CommandBuffer& commandBuffer) {
         // models.emplace_back(std::make_unique<Model>(Model::LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/models/AlphaBlendModeTest.glb")));
-        models.emplace_back(std::make_unique<Model>(modelLoader->LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/Bistro_Godot.glb")));
+        // models.emplace_back(std::make_unique<Model>(modelLoader->LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/Bistro_Godot.glb")));
+        auto& model = models.emplace_back(std::make_unique<Model>(modelLoader->LoadFile(commandBuffer, 0, RESOURCE_BASEPATH "/models/DamagedHelmet.glb", true)));
+        model->GetRoot()->AddComponent(std::make_shared<PhysicsComponent>());
+        model->GetRoot()->EnterScene();
     });
     // models[0]->GetRoot()->SetLScale(glm::vec3(5.0f, 5.0f, 5.0f));
     // models[0]->GetRoot()->SetLPos(glm::vec3(0.0f, -5.0f, -100.0f));
@@ -48,6 +55,7 @@ void Game::MainLoop() {
 
     // Tick
     flyCamera.Tick();
+    GetPhysics().Tick();
 
     // Draw
     auto& onSurfaceReadySemaphore = GetCommandEncoder().WaitForNextFrame();
@@ -61,12 +69,15 @@ void Game::MainLoop() {
     }
     auto [frameIndex, commandBuffer] = GetCommandEncoder().GetNextFrame();
 
+    // Kick off anything queued since last frame.
+    GetUploadQueue().Submit();
+
     HotReload::Attempt(frameIndex, GetDevice());
     gui->BeginFrame();
     gui->DrawFpsOverlay();
 
-    // terrain->Update(flyCamera.GetPos(), commandBuffer);
-    GetRenderer().UploadWorldState(commandBuffer, frameIndex);
+    terrain->Update(flyCamera.GetPos(), commandBuffer);
+    GetRenderer().UploadWorldState(frameIndex);
 
     commandBuffer.BeginRegion("CSM Depth");
     directionalLight->RegenerateLightSpaceMatrices(
@@ -121,9 +132,9 @@ void Game::MainLoop() {
 
     GetRenderer().DrawOpaque(commandBuffer, frameIndex,
         &flyCamera, skybox.get(), directionalLight.get());
-    // terrain->Draw(window->getHandle(), commandBuffer, frameIndex,
-        // &flyCamera, skybox.get(), directionalLight.get());
-    skybox->Draw(commandBuffer, frameIndex,
+    terrain->Draw(window->getHandle(), commandBuffer, frameIndex,
+        &flyCamera, skybox.get(), directionalLight.get());
+    skybox->Draw(   commandBuffer, frameIndex,
         &flyCamera);
     GetRenderer().DrawTransparent(commandBuffer, frameIndex,
         &flyCamera, skybox.get(), directionalLight.get());
@@ -140,7 +151,10 @@ void Game::MainLoop() {
     commandBuffer.EndRegion();
     presenter.PrepareImageForPresentation(commandBuffer, imageIndex);
 
-    GetCommandEncoder().SubmitFrame(frameIndex, onRenderFinishedSemaphore);
+    // The renderer only draws uploads that had completed when UploadWorldState ran, so this wait is already
+    // satisfied, but it is what makes the transfer queue's writes visible to this submit.
+    auto uploadWait = GetUploadQueue().GetWaitInfo(GetRenderer().GetPublishedUploads());
+    GetCommandEncoder().SubmitFrame(frameIndex, onRenderFinishedSemaphore, { &uploadWait, 1 });
     result = presenter.Present(imageIndex);
     switch (result) {
         case dvk::PresenterResult::Fail_MustResize:

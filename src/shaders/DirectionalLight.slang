@@ -1,6 +1,8 @@
 static const float SHADOW_NORMAL_BIAS = 0.002;
-static const float SHADOW_MIN_BIAS = 0.0005;
-static const float SHADOW_MAX_BIAS = 0.005;
+// Depth bias in shadow map texels (world-space texel size along the light), so it doesn't change when cascade
+// distances or the cascade depth range change. MAX applies at grazing angles.
+static const float SHADOW_MIN_BIAS_TEXELS = 1.0;
+static const float SHADOW_MAX_BIAS_TEXELS = 4.0;
 
 static const float CASCADE_BLEND_FRACTION = 0.1;
 
@@ -47,8 +49,14 @@ float3 sampleShadowCascade(
 
     if (ndc.z < 0.0 || ndc.z > 1.0) return 0.0;
 
-    float slopeBias = SHADOW_MAX_BIAS * (1.0 - dot(normal, lightDir));
-    float bias = clamp(slopeBias, SHADOW_MIN_BIAS, SHADOW_MAX_BIAS) / cascadeDistance;
+    // For the orthographic cascade matrix, row 0 scales x by 1 / halfWidth and row 2 scales depth by
+    // 1 / depthRange, so these give the world size of a texel and NDC depth per world unit.
+    float4x4 lightMat = directionalLight.lightSpaceViewProjMats[cascadeIndex];
+    float worldTexelSize = 2.0 / (length(lightMat[0].xyz) * float(directionalLight.shadowMapSize));
+    float depthPerWorldUnit = length(lightMat[2].xyz);
+
+    float slopeBias = SHADOW_MAX_BIAS_TEXELS * (1.0 - dot(normal, lightDir));
+    float bias = clamp(slopeBias, SHADOW_MIN_BIAS_TEXELS, SHADOW_MAX_BIAS_TEXELS) * worldTexelSize * depthPerWorldUnit;
 
     float2 texelSize = 1.0 / float2(directionalLight.shadowMapSize);
 

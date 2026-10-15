@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ShaderHotReload.hpp"
-#include "BindingProvider.hpp"
+#include "../ShaderHotReload.hpp"
+#include "../BindingProvider.hpp"
 
 #include <dvk/dvk.hpp>
 

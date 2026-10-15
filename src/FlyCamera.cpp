@@ -16,7 +16,7 @@
 #define FOV glm::radians(80.0f)
 
 static constexpr float Z_NEAR = 0.1f;
-static constexpr float Z_FAR = 5000.0f;
+static constexpr float Z_FAR = 2500.0f;
 
 static double scrollDelta;
 static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset) {

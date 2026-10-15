@@ -2,48 +2,64 @@
 
 #include "utils/Paths.hpp"
 #include "components/InstanceComponent.hpp"
+#include "utils/GrowingBuffer.hpp"
+#include "components/PhysicsComponent.hpp"
+
+#include <algorithm>
+#include <cassert>
+#include <stdexcept>
 
 static constexpr uint64_t BUFFER_GROW_FACTOR = 2;
 static constexpr uint32_t MAX_SHADER_PASSES = 64;
 static constexpr uint32_t MAX_TEXTURES = 1024 * 64;
 static constexpr uint32_t MAX_SAMPLERS = 128;
-static constexpr uint32_t NUM_STORAGE_BUFFERS = 5 + (7 * FRAMES_IN_FLIGHT) + MAX_SHADER_PASSES;
+static constexpr uint32_t NUM_STATIC_BUFFERS = 3;
+static constexpr uint32_t NUM_PER_FRAME_BUFFERS = 8;
+static constexpr uint32_t NUM_STORAGE_BUFFERS = (NUM_STATIC_BUFFERS + NUM_PER_FRAME_BUFFERS) * FRAMES_IN_FLIGHT + MAX_SHADER_PASSES;
 
-void ShaderPass::SetNeedRebindMaterials() {
-    for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        needRebindMaterials[i] = true;
-    }
-}
+// Static scene capacities. Each is a single chunk allocated up front in device-local memory, since the
+// draw path binds one vertex buffer, one index buffer and one buffer per StructuredBuffer.
+static constexpr uint32_t MAX_VERTICES = 8 * 1024 * 1024;       // 448 MiB at 56 bytes per vertex
+static constexpr uint32_t MAX_INDICES = 32 * 1024 * 1024;       // 128 MiB
+static constexpr uint32_t MAX_MESHES = 64 * 1024;
+static constexpr uint32_t MAX_INSTANCES = 256 * 1024;
+static constexpr uint32_t MAX_MATERIALS_PER_SHADER = 16 * 1024;
 
-Renderer::Renderer(BindingProvider* cameraProvider)
-    : _vertexArray(
-        "[Mesh Renderer] Vertices",
-        vk::BufferUsageFlagBits::eVertexBuffer,
-        vk::PipelineStageFlagBits2::eVertexShader),
-    _indexArray(
-        "[Mesh Renderer] Indices",
-        vk::BufferUsageFlagBits::eIndexBuffer,
-        vk::PipelineStageFlagBits2::eVertexShader),
-    _meshMetadata(
-        "[Mesh Renderer] Mesh Metadata",
-        vk::BufferUsageFlagBits::eStorageBuffer,
-        vk::PipelineStageFlagBits2::eComputeShader),
-    _instances(
-        "[Mesh Renderer] Instances",
-        vk::BufferUsageFlagBits::eStorageBuffer,
-        vk::PipelineStageFlagBits2::eComputeShader),
-    _staticInstanceFrameData(
-        "[Mesh Renderer] Static Instance Frame Data",
-        vk::BufferUsageFlagBits::eStorageBuffer,
-        vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eVertexShader)
-{
-    _setNeedRebindMeshMetadata();
-    _setNeedRebindInstances();
-    _setNeedRebindStaticInstanceFrameData();
+Renderer::Renderer(BindingProvider* cameraProvider) : _uploadQueue(GetUploadQueue()) {
+    _vertices = std::make_unique<ChunkedBuffer>(_uploadQueue, ChunkedBuffer::Desc {
+        .label = "[Mesh Renderer] Vertices",
+        .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+        .elementSize = sizeof(VertexDesc),
+        .elementsPerChunk = MAX_VERTICES,
+    });
+    _indices = std::make_unique<ChunkedBuffer>(_uploadQueue, ChunkedBuffer::Desc {
+        .label = "[Mesh Renderer] Indices",
+        .usage = vk::BufferUsageFlagBits::eIndexBuffer,
+        .elementSize = sizeof(uint32_t),
+        .elementsPerChunk = MAX_INDICES,
+    });
+    _meshMetadata = std::make_unique<ChunkedBuffer>(_uploadQueue, ChunkedBuffer::Desc {
+        .label = "[Mesh Renderer] Mesh Metadata",
+        .usage = vk::BufferUsageFlagBits::eStorageBuffer,
+        .elementSize = sizeof(MeshMetadata),
+        .elementsPerChunk = MAX_MESHES,
+    });
+    _instances = std::make_unique<ChunkedBuffer>(_uploadQueue, ChunkedBuffer::Desc {
+        .label = "[Mesh Renderer] Instances",
+        .usage = vk::BufferUsageFlagBits::eStorageBuffer,
+        .elementSize = sizeof(Instance),
+        .elementsPerChunk = MAX_INSTANCES,
+    });
+    _staticInstanceFrameData = std::make_unique<ChunkedBuffer>(_uploadQueue, ChunkedBuffer::Desc {
+        .label = "[Mesh Renderer] Static Instance Frame Data",
+        .usage = vk::BufferUsageFlagBits::eStorageBuffer,
+        .elementSize = sizeof(InstanceFrameData),
+        .elementsPerChunk = MAX_INSTANCES,
+    });
 
     _bindPool = dvk::BindPool::Create(GetDevice())
             .SetLabel("[Mesh Renderer]")
-            .SetMaxSets(32)
+            .SetMaxSets(1 + 2 * FRAMES_IN_FLIGHT + MAX_SHADER_PASSES)
             .AddEntry(vk::DescriptorType::eStorageBuffer, NUM_STORAGE_BUFFERS)
             .AddEntry(vk::DescriptorType::eSampledImage, MAX_TEXTURES)
             .AddEntry(vk::DescriptorType::eSampler, MAX_SAMPLERS)
@@ -88,6 +104,23 @@ Renderer::Renderer(BindingProvider* cameraProvider)
             .FinishEntry(2)
         .Build();
     _staticBindSet = dvk::BindSet::Create<FRAMES_IN_FLIGHT>(GetDevice(), _bindPool, _staticBindSetLayout, "[Mesh Renderer] Static");
+    // Chunks never move, so these are bound once.
+    for (size_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        dvk::Binder()
+            .BindBuffer(0)
+                .SetBufferType(vk::DescriptorType::eStorageBuffer)
+                .SetBuffer(_meshMetadata->GetChunk(0))
+                .FinishBuffer()
+            .BindBuffer(1)
+                .SetBufferType(vk::DescriptorType::eStorageBuffer)
+                .SetBuffer(_instances->GetChunk(0))
+                .FinishBuffer()
+            .BindBuffer(2)
+                .SetBufferType(vk::DescriptorType::eStorageBuffer)
+                .SetBuffer(_staticInstanceFrameData->GetChunk(0))
+                .FinishBuffer()
+            .Update(_staticBindSet[i]);
+    }
 
     _dynamicInstanceFrameData = dvk::Buffer::Create(GetDevice())
         .SetLabel("[Mesh Renderer] Dynamic Instance Frame Data")
@@ -126,9 +159,16 @@ Renderer::Renderer(BindingProvider* cameraProvider)
         .SetSize(BUFFER_START_SIZE)
         .Build<FRAMES_IN_FLIGHT>();
     _compactedCommands = dvk::Buffer::Create(GetDevice())
-    .SetLabel("[Mesh Renderer] Compacted Commands")
+        .SetLabel("[Mesh Renderer] Compacted Commands")
         .SetUsage(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer)
         .SetSize(BUFFER_START_SIZE)
+        .Build<FRAMES_IN_FLIGHT>();
+    _activeInstanceIndices = dvk::Buffer::Create(GetDevice())
+        .SetLabel("[Mesh Renderer] Active Instance Indices")
+        .SetUsage(vk::BufferUsageFlagBits::eStorageBuffer)
+        .SetSize(BUFFER_START_SIZE)
+        .EnablePersistentMapping()
+        .AllowSequentialWrite()
         .Build<FRAMES_IN_FLIGHT>();
     _perFrameBindSetLayout = dvk::BindSetLayout::Create(GetDevice())
         .SetLabel("[Mesh Renderer] Per Frame")
@@ -147,7 +187,7 @@ Renderer::Renderer(BindingProvider* cameraProvider)
         .AddEntry(4)
             .SetType(vk::DescriptorType::eStorageBuffer)
             .SetStage(vk::ShaderStageFlagBits::eCompute)
-            .FinishEntry(3)
+            .FinishEntry(4)
         .Build();
     _perFrameBindSet = dvk::BindSet::Create<FRAMES_IN_FLIGHT>(GetDevice(), _bindPool, _perFrameBindSetLayout, "[Mesh Renderer] Per Frame");
     for (size_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
@@ -180,6 +220,10 @@ Renderer::Renderer(BindingProvider* cameraProvider)
                 .SetBufferType(vk::DescriptorType::eStorageBuffer)
                 .SetBuffer(_compactedCommands[i])
                 .FinishBuffer()
+            .BindBuffer(7)
+                .SetBufferType(vk::DescriptorType::eStorageBuffer)
+                .SetBuffer(_activeInstanceIndices[i])
+                .FinishBuffer()
             .Update(_perFrameBindSet[i]);
     }
 
@@ -187,7 +231,7 @@ Renderer::Renderer(BindingProvider* cameraProvider)
         .SetLabel("[Mesh Renderer] Compute")
         .AddPushConstantRange()
             .SetStage(vk::ShaderStageFlagBits::eCompute)
-            .SetSize(sizeof(uint32_t))
+            .SetSize(2 * sizeof(uint32_t))
             .FinishPushConstantRange()
         .AddBindSetLayout(_staticBindSetLayout)
         .AddBindSetLayout(_perFrameBindSetLayout)
@@ -233,6 +277,10 @@ Renderer::Renderer(BindingProvider* cameraProvider)
             .SetVertexInput(RENDERER_VERTEX_BINDINGS, RENDERER_VERTEX_ATTRIBUTES)
             .SetRasterizer()
                 .SetCullMode(vk::CullModeFlagBits::eFront)
+                // Casters between the light and the cascade's near plane are clamped to depth 0 instead of
+                // being clipped, so they still occlude. Clamping is per fragment, so triangles crossing the
+                // near plane stay correct too.
+                .EnableDepthClamp()
                 .FinishRasterizer()
             .AddStage(vk::ShaderStageFlagBits::eVertex, depthOnlyShader, "VertexMain").FinishStage()
             .EnableDepth(SHADOW_DEPTH_FORMAT)
@@ -251,31 +299,38 @@ Renderer::Renderer(BindingProvider* cameraProvider)
     });
 }
 
-ShaderIndex Renderer::AddShader(const dvk::GraphicsPipeline::Ref& pipeline, bool isTransparent, const std::string& name) {
+ShaderIndex Renderer::AddShader(const dvk::GraphicsPipeline::Ref& pipeline, vk::DeviceSize materialSize, bool isTransparent, const std::string& name) {
+    auto materials = std::make_unique<ChunkedBuffer>(_uploadQueue, ChunkedBuffer::Desc {
+        .label = "[Mesh Renderer] '" + name + "' Materials",
+        .usage = vk::BufferUsageFlagBits::eStorageBuffer,
+        .elementSize = materialSize,
+        .elementsPerChunk = MAX_MATERIALS_PER_SHADER,
+    });
+    auto bindSet = dvk::BindSet::Create(GetDevice(), _bindPool, _shaderPassBindSetLayout, "[Mesh Renderer] '" + name + "'");
+    dvk::Binder()
+        .BindBuffer(0)
+            .SetBufferType(vk::DescriptorType::eStorageBuffer)
+            .SetBuffer(materials->GetChunk(0))
+            .FinishBuffer()
+        .Update(bindSet);
+
+    std::lock_guard lock(_mutex);
+
     ShaderIndex index = _shaderPasses.size();
-    auto& shaderPass = _shaderPasses.emplace_back(ShaderPass {
+    _shaderPasses.emplace_back(ShaderPass {
         .pipeline = pipeline,
         .isTransparent = isTransparent,
-        .materials = GrowingBuffer(
-            "[Mesh Renderer] '" + name + "' Materials",
-            vk::BufferUsageFlagBits::eStorageBuffer,
-            vk::PipelineStageFlagBits2::eFragmentShader,
-            BUFFER_START_SIZE),
-        .bindSet = dvk::BindSet::Create<FRAMES_IN_FLIGHT>(GetDevice(),
-            _bindPool,
-            _shaderPassBindSetLayout,
-            "[Mesh Renderer] '" + name + "'"),
+        .materials = std::move(materials),
+        .bindSet = std::move(bindSet),
     });
-    shaderPass.SetNeedRebindMaterials();
+    _materials.emplace_back();
+    _shaderToLiveMeshCount.emplace_back(0);
 
     if (isTransparent) {
         _numTransparentShaderPasses++;
     } else {
         _numOpaqueShaderPasses++;
     }
-
-    _shaderToMaxMeshCount.emplace_back();
-    _shaderToCommandIndexOffsetsStaging.emplace_back();
 
     return index;
 }
@@ -318,131 +373,206 @@ SamplerIndex Renderer::AddSampler(const dvk::Sampler::Ref& sampler) {
     return index;
 }
 
-MaterialIndex Renderer::AddMaterial(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const void* src, uint64_t size) {
-    auto& shaderPass = _shaderPasses.at(shader);
-
-    if (shaderPass.materials.Push(commandBuffer, frameIndex, src, size)) {
-        shaderPass.SetNeedRebindMaterials();
+MaterialIndex Renderer::AddMaterial(ShaderIndex shader, const void* src, vk::DeviceSize size) {
+    ChunkedBuffer* materials;
+    {
+        std::lock_guard lock(_mutex);
+        materials = _shaderPasses.at(shader).materials.get();
     }
+    assert(size == materials->GetElementSize());
 
-    return shaderPass.numMaterials++;
+    auto [allocation, ticket] = materials->AllocateAndUpload(src, 1);
+    if (!allocation) throw std::runtime_error("[Mesh Renderer] Out of material space, raise MAX_MATERIALS_PER_SHADER");
+
+    std::lock_guard lock(_mutex);
+    MaterialIndex index = allocation.firstElement;
+    auto& records = _materials[shader];
+    if (records.size() <= index) records.resize(index + 1);
+    records[index] = MaterialRecord {
+        .live = true,
+        .allocation = allocation,
+        .ticket = ticket,
+    };
+    return index;
 }
 
-MeshIndex Renderer::AddMesh(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, ShaderIndex shader, const MeshDesc& meshDesc) {
+MeshIndex Renderer::AddMesh(ShaderIndex shader, const MeshDesc& meshDesc) {
+    auto vertexCount = static_cast<uint32_t>(meshDesc.vertices.size());
+    auto indexCount = static_cast<uint32_t>(meshDesc.indices.size());
+
+    auto vertices = _vertices->Allocate(vertexCount);
+    auto indices = _indices->Allocate(indexCount);
+    auto metadata = _meshMetadata->Allocate(1);
+    if (!vertices || !indices || !metadata) {
+        // Nothing was uploaded yet, so these can go straight back.
+        _vertices->Free(vertices);
+        _indices->Free(indices);
+        _meshMetadata->Free(metadata);
+        throw std::runtime_error("[Mesh Renderer] Out of mesh space (or empty mesh), raise MAX_VERTICES, MAX_INDICES or MAX_MESHES");
+    }
+
     MeshMetadata meshMetadata = {
-        .indexCount = static_cast<uint32_t>(meshDesc.indices.size()),
-        .firstIndex = _indexCount,
-        .vertexOffset = _vertexCount,
+        .indexCount = indexCount,
+        .firstIndex = indices.firstElement,
+        .vertexOffset = static_cast<int32_t>(vertices.firstElement),
         .shaderIndex = shader,
         .boundingSphereCenter = meshDesc.boundingSphereCenter,
         .boundingSphereRadius = meshDesc.boundingSphereRadius,
     };
 
-    _indexCount += meshDesc.indices.size();
-    _vertexCount += static_cast<int32_t>(meshDesc.vertices.size());
+    UploadTicket ticket;
+    ticket |= _vertices->Upload(vertices, meshDesc.vertices.data(), vertexCount);
+    ticket |= _indices->Upload(indices, meshDesc.indices.data(), indexCount);
+    ticket |= _meshMetadata->Upload(metadata, &meshMetadata, 1);
 
-    _indexArray.Push(commandBuffer, frameIndex, meshDesc.indices.data(), meshDesc.indices.size() * sizeof(uint32_t));
-    _vertexArray.Push(commandBuffer, frameIndex, meshDesc.vertices.data(), meshDesc.vertices.size() * sizeof(VertexDesc));
-
-    if (_meshMetadata.Push(commandBuffer, frameIndex, &meshMetadata, sizeof(MeshMetadata))) {
-        _setNeedRebindMeshMetadata();
+    std::lock_guard lock(_mutex);
+    MeshIndex index = metadata.firstElement;
+    if (_meshes.size() <= index) {
+        _meshes.resize(index + 1);
+        _meshToActiveInstanceCount.resize(index + 1);
     }
-
-    _meshToMaxInstanceCount.emplace_back();
-    _meshToInstanceIndexOffsetsStaging.emplace_back();
-
-    _shaderToMaxMeshCount[shader]++;
-
-    _needRecomputeCommandIndexOffsets = true;
-    return _numMeshes++;
+    _meshes[index] = MeshRecord {
+        .live = true,
+        .shader = shader,
+        .vertices = vertices,
+        .indices = indices,
+        .metadata = metadata,
+        .ticket = ticket,
+    };
+    _meshSlotHighWater = std::max(_meshSlotHighWater, index + 1);
+    _shaderToLiveMeshCount[shader]++;
+    return index;
 }
 
-std::pair<InstanceIndex, std::optional<DynamicFrameDataIndex>> Renderer::AddInstance(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc) {
-    InstanceIndex index = _numStaticInstances + _numDynamicInstances;
+InstanceIndex Renderer::AddInstance(const std::shared_ptr<InstanceComponent>& component, const InstanceDesc& instanceDesc) {
+    auto instanceAllocation = _instances->Allocate(1);
+    if (!instanceAllocation) throw std::runtime_error("[Mesh Renderer] Out of instance space, raise MAX_INSTANCES");
+    InstanceIndex index = instanceAllocation.firstElement;
 
     Instance instance {
-      .meshIndex = instanceDesc.meshIndex,
-      .materialIndex = instanceDesc.materialIndex,
-      .isDynamic = instanceDesc.isDynamic ? vk::True : vk::False,
+        .meshIndex = instanceDesc.meshIndex,
+        .materialIndex = instanceDesc.materialIndex,
+        .isDynamic = instanceDesc.isDynamic ? vk::True : vk::False,
     };
 
-    std::optional<DynamicFrameDataIndex> dynamicFrameDataIndex;
-    if (instance.isDynamic) {
-        InstanceIndex dynamicIndex = _numDynamicInstances++;
-        _dynamicInstanceFrameDataStaging.emplace_back();
-        _dynamicInstanceIndexToComponent.emplace_back(component);
-
-        dynamicFrameDataIndex = instance.frameDataIndex = dynamicIndex;
+    UploadTicket ticket;
+    ChunkedBuffer::Allocation staticFrameData;
+    DynamicFrameDataIndex dynamicSlot = NULL_INDEX;
+    if (instanceDesc.isDynamic) {
+        std::lock_guard lock(_mutex);
+        if (!_freeDynamicSlots.empty()) {
+            dynamicSlot = _freeDynamicSlots.back();
+            _freeDynamicSlots.pop_back();
+        } else {
+            dynamicSlot = static_cast<DynamicFrameDataIndex>(_dynamicSlots.size());
+            _dynamicSlots.emplace_back();
+        }
+        _dynamicSlots[dynamicSlot] = DynamicSlot {
+            .component = component,
+            .instance = index,
+        };
+        instance.frameDataIndex = dynamicSlot;
     } else {
-        InstanceIndex staticIndex = _numStaticInstances++;
+        staticFrameData = _staticInstanceFrameData->Allocate(1);
+        if (!staticFrameData) {
+            _instances->Free(instanceAllocation);
+            throw std::runtime_error("[Mesh Renderer] Out of static frame data space, raise MAX_INSTANCES");
+        }
         InstanceFrameData data {
             .modelMat = component->GetNode()->GetMatrix(),
         };
-        if (_staticInstanceFrameData.Push(commandBuffer, frameIndex, &data, sizeof(InstanceFrameData))) {
-            _setNeedRebindStaticInstanceFrameData();
-        }
-
-        instance.frameDataIndex = staticIndex;
+        ticket |= _staticInstanceFrameData->Upload(staticFrameData, &data, 1);
+        instance.frameDataIndex = staticFrameData.firstElement;
     }
 
-    if (_instances.Push(commandBuffer, frameIndex, &instance, sizeof(Instance))) {
-        _setNeedRebindInstances();
-    }
+    ticket |= _instances->Upload(instanceAllocation, &instance, 1);
 
-    _meshToMaxInstanceCount[instanceDesc.meshIndex]++;
+    std::lock_guard lock(_mutex);
+    auto& mesh = _meshes.at(instanceDesc.meshIndex);
+    assert(mesh.live);
+    mesh.instanceRefs++;
+    // The instance can only be drawn once its mesh and material are resident too.
+    ticket |= mesh.ticket;
+    ticket |= _materials.at(mesh.shader).at(instanceDesc.materialIndex).ticket;
 
-    _needRecomputeInstanceIndexOffsets = true;
-    return std::make_pair(index, dynamicFrameDataIndex);
+    if (_instanceRecords.size() <= index) _instanceRecords.resize(index + 1);
+    _instanceRecords[index] = InstanceRecord {
+        .live = true,
+        .mesh = instanceDesc.meshIndex,
+        .instance = instanceAllocation,
+        .staticFrameData = staticFrameData,
+        .dynamicSlot = dynamicSlot,
+        .ticket = ticket,
+    };
+    _pendingInstances.push_back(index);
+    return index;
 }
 
-void Renderer::UploadWorldState(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex) {
-    if (_vertexArray.GetBuffer() == nullptr) _vertexArray.Recreate(commandBuffer, frameIndex);
-    if (_indexArray.GetBuffer() == nullptr) _indexArray.Recreate(commandBuffer, frameIndex);
+void Renderer::RemoveInstance(InstanceIndex instance) {
+    std::lock_guard lock(_mutex);
+    _removedInstances.push_back(instance);
+}
 
+void Renderer::RemoveMesh(MeshIndex mesh) {
+    std::lock_guard lock(_mutex);
+    _removedMeshes.push_back(mesh);
+}
+
+void Renderer::RemoveMaterial(ShaderIndex shader, MaterialIndex material) {
+    std::lock_guard lock(_mutex);
+    _removedMaterials.emplace_back(shader, material);
+}
+
+void Renderer::UploadWorldState(uint32_t frameIndex) {
+    // This slot's fence has been waited on, so ranges freed two frames ago can be reused.
+    _vertices->BeginFrame(frameIndex);
+    _indices->BeginFrame(frameIndex);
+    _meshMetadata->BeginFrame(frameIndex);
+    _instances->BeginFrame(frameIndex);
+    _staticInstanceFrameData->BeginFrame(frameIndex);
     for (auto& shaderPass : _shaderPasses) {
-        if (!shaderPass.needRebindMaterials[frameIndex] || shaderPass.materials.GetBuffer() == nullptr) continue;
-
-        dvk::Binder()
-            .BindBuffer(0)
-                .SetBufferType(vk::DescriptorType::eStorageBuffer)
-                .SetBuffer(shaderPass.materials.GetBuffer())
-                .FinishBuffer()
-            .Update(shaderPass.bindSet[frameIndex]);
-
-        shaderPass.needRebindMaterials[frameIndex] = false;
+        shaderPass.materials->BeginFrame(frameIndex);
     }
 
-    if (_needRebindMeshMetadata[frameIndex] ||
-        _needRebindInstances[frameIndex] ||
-        _needRebindStaticInstanceFrameData[frameIndex]
-    ) {
-        dvk::Binder staticBinder;
-        if (_needRebindMeshMetadata[frameIndex]) {
-            if (_meshMetadata.GetBuffer() == nullptr) _meshMetadata.Recreate(commandBuffer, frameIndex);
-            staticBinder.BindBuffer(0)
-                .SetBufferType(vk::DescriptorType::eStorageBuffer)
-                .SetBuffer(_meshMetadata.GetBuffer())
-                .FinishBuffer();
-        }
-        if (_needRebindInstances[frameIndex]) {
-            if (_instances.GetBuffer() == nullptr) _instances.Recreate(commandBuffer, frameIndex);
-            staticBinder.BindBuffer(1)
-                .SetBufferType(vk::DescriptorType::eStorageBuffer)
-                .SetBuffer(_instances.GetBuffer())
-                .FinishBuffer();
-        }
-        if (_needRebindStaticInstanceFrameData[frameIndex]) {
-            if (_staticInstanceFrameData.GetBuffer() == nullptr) _staticInstanceFrameData.Recreate(commandBuffer, frameIndex);
-            staticBinder.BindBuffer(2)
-                .SetBufferType(vk::DescriptorType::eStorageBuffer)
-                .SetBuffer(_staticInstanceFrameData.GetBuffer())
-                .FinishBuffer();
-        }
-        staticBinder.Update(_staticBindSet[frameIndex]);
+    {
+        std::lock_guard lock(_mutex);
 
-        _needRebindMeshMetadata[frameIndex] = false;
-        _needRebindInstances[frameIndex] = false;
-        _needRebindStaticInstanceFrameData[frameIndex] = false;
+        // Removals are applied before this frame is recorded, so it never references them. Their ranges are
+        // freed now but only reused once the frames already in flight have finished.
+        _processRemovalsLocked();
+        _publishCompletedLocked();
+
+        _numMeshSlots = _meshSlotHighWater;
+        _activeInstancesStaging = _activeInstances;
+        _numActiveInstances = static_cast<uint32_t>(_activeInstancesStaging.size());
+
+        _meshToInstanceIndexOffsetsStaging.resize(_numMeshSlots);
+        uint32_t instanceOffset = 0;
+        for (uint32_t mesh = 0; mesh < _numMeshSlots; mesh++) {
+            _meshToInstanceIndexOffsetsStaging[mesh] = instanceOffset;
+            instanceOffset += _meshToActiveInstanceCount[mesh];
+        }
+
+        _shaderToMaxMeshCount = _shaderToLiveMeshCount;
+        _shaderToCommandIndexOffsetsStaging.resize(_shaderToMaxMeshCount.size());
+        uint32_t commandOffset = 0;
+        for (size_t shader = 0; shader < _shaderToMaxMeshCount.size(); shader++) {
+            _shaderToCommandIndexOffsetsStaging[shader] = commandOffset;
+            commandOffset += _shaderToMaxMeshCount[shader];
+        }
+
+        _dynamicInstanceFrameDataStaging.resize(_dynamicSlots.size());
+        for (size_t slot = 0; slot < _dynamicSlots.size(); slot++) {
+            if (auto component = _dynamicSlots[slot].component.lock()) {
+                auto node = component->GetNode();
+                auto physicsComponent = node->GetComponent<PhysicsComponent>();
+                if (physicsComponent != nullptr) {
+                    _dynamicInstanceFrameDataStaging[slot].modelMat = physicsComponent->GetInterpolatedMatrix();
+                } else {
+                    _dynamicInstanceFrameDataStaging[slot].modelMat = node->GetMatrix();
+                }
+            }
+        }
     }
 
     dvk::Binder perFrameBinder;
@@ -454,6 +584,7 @@ void Renderer::UploadWorldState(dvk::CommandBuffer& commandBuffer, uint32_t fram
     didResizeAnyPerFrameBuffer |= _maybeResizeShaderToCommandIndexOffsets(frameIndex, perFrameBinder);
     didResizeAnyPerFrameBuffer |= _maybeResizeDrawCounts(frameIndex, perFrameBinder);
     didResizeAnyPerFrameBuffer |= _maybeResizeCompactedCommands(frameIndex, perFrameBinder);
+    didResizeAnyPerFrameBuffer |= _maybeResizeActiveInstanceIndices(frameIndex, perFrameBinder);
     if (didResizeAnyPerFrameBuffer) {
         perFrameBinder.Update(_perFrameBindSet[frameIndex]);
     }
@@ -461,13 +592,23 @@ void Renderer::UploadWorldState(dvk::CommandBuffer& commandBuffer, uint32_t fram
     _computeMeshToInstanceIndexOffsets(frameIndex);
     _computeShaderToCommandIndexOffsets(frameIndex);
 
-    _writeDynamicInstanceFrameData(frameIndex);
+    if (!_activeInstancesStaging.empty()) {
+        _activeInstanceIndices[frameIndex]->CopyToAndFlush(_activeInstancesStaging.data(), 0, _activeInstancesStaging.size() * sizeof(uint32_t));
+    }
+    if (!_dynamicInstanceFrameDataStaging.empty()) {
+        _dynamicInstanceFrameData[frameIndex]->CopyToAndFlush(_dynamicInstanceFrameDataStaging.data(), 0, _dynamicInstanceFrameDataStaging.size() * sizeof(InstanceFrameData));
+    }
+}
+
+UploadTicket Renderer::GetPublishedUploads() const {
+    return _publishedUploads;
 }
 
 void Renderer::ComputeDrawCommands(
     dvk::CommandBuffer& commandBuffer,
     uint32_t frameIndex,
-    BindingProvider* cameraProvider
+    BindingProvider* cameraProvider,
+    bool cullNearPlane
 ) {
     commandBuffer.BeginRegion("[Mesh Renderer] Compute Draw Commands", glm::vec4(0.6f, 0.4f, 0.4f, 1.0f));
 
@@ -486,8 +627,9 @@ void Renderer::ComputeDrawCommands(
     commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
     commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
     cameraProvider->Bind(2, commandBuffer, frameIndex);
-    commandBuffer.PushConstant(0, vk::ShaderStageFlagBits::eCompute, _numStaticInstances + _numDynamicInstances);
-    commandBuffer.Dispatch((_numStaticInstances + _numDynamicInstances + 63) / 64);
+    commandBuffer.PushConstant(0, vk::ShaderStageFlagBits::eCompute, _numActiveInstances);
+    commandBuffer.PushConstant(sizeof(uint32_t), vk::ShaderStageFlagBits::eCompute, static_cast<uint32_t>(cullNearPlane ? 1 : 0));
+    commandBuffer.Dispatch((_numActiveInstances + 63) / 64);
 
     commandBuffer.InsertBarriers()
         .AddBufferBarrier()
@@ -508,8 +650,8 @@ void Renderer::ComputeDrawCommands(
         .FinishBarriers();
 
     commandBuffer.SetComputePipeline(_computePass2Pipeline);
-    commandBuffer.PushConstant(0, vk::ShaderStageFlagBits::eCompute, _numMeshes);
-    commandBuffer.Dispatch((_numMeshes + 63) / 64);
+    commandBuffer.PushConstant(0, vk::ShaderStageFlagBits::eCompute, _numMeshSlots);
+    commandBuffer.Dispatch((_numMeshSlots + 63) / 64);
 
     commandBuffer.InsertBarriers()
         .AddBufferBarrier()
@@ -538,8 +680,8 @@ void Renderer::DrawOpaque(
 
     commandBuffer.SetGraphicsPipeline(_shaderPasses[0].pipeline);
 
-    commandBuffer.SetVertexBuffer(0, _vertexArray.GetBuffer());
-    commandBuffer.SetIndexBuffer(_indexArray.GetBuffer());
+    commandBuffer.SetVertexBuffer(0, _vertices->GetChunk(0));
+    commandBuffer.SetIndexBuffer(_indices->GetChunk(0));
 
     commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
     commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
@@ -548,12 +690,12 @@ void Renderer::DrawOpaque(
     directionalLightProvider->Bind(4, commandBuffer, frameIndex);
     commandBuffer.SetBindSet(5, _texturesSamplersBindSet);
 
-    for (uint32_t i = 0; i < _shaderPasses.size(); i++) {
+    for (uint32_t i = 0; i < _shaderToMaxMeshCount.size(); i++) {
         const auto& shaderPass = _shaderPasses[i];
-        if (shaderPass.isTransparent || shaderPass.materials.GetBuffer() == nullptr) continue;
+        if (shaderPass.isTransparent || _shaderToMaxMeshCount[i] == 0) continue;
 
         commandBuffer.SetGraphicsPipeline(shaderPass.pipeline);
-        commandBuffer.SetBindSet(6, shaderPass.bindSet[frameIndex]);
+        commandBuffer.SetBindSet(6, shaderPass.bindSet);
         commandBuffer.DrawIndexedIndirectCount(
             _compactedCommands[frameIndex],
             _drawCounts[frameIndex],
@@ -574,8 +716,8 @@ void Renderer::DrawTransparent(
 
     commandBuffer.SetGraphicsPipeline(_shaderPasses[0].pipeline);
 
-    commandBuffer.SetVertexBuffer(0, _vertexArray.GetBuffer());
-    commandBuffer.SetIndexBuffer(_indexArray.GetBuffer());
+    commandBuffer.SetVertexBuffer(0, _vertices->GetChunk(0));
+    commandBuffer.SetIndexBuffer(_indices->GetChunk(0));
 
     commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
     commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
@@ -584,12 +726,12 @@ void Renderer::DrawTransparent(
     directionalLightProvider->Bind(4, commandBuffer, frameIndex);
     commandBuffer.SetBindSet(5, _texturesSamplersBindSet);
 
-    for (uint32_t i = 0; i < _shaderPasses.size(); i++) {
+    for (uint32_t i = 0; i < _shaderToMaxMeshCount.size(); i++) {
         const auto& shaderPass = _shaderPasses[i];
-        if (!shaderPass.isTransparent || shaderPass.materials.GetBuffer() == nullptr) continue;
+        if (!shaderPass.isTransparent || _shaderToMaxMeshCount[i] == 0) continue;
 
         commandBuffer.SetGraphicsPipeline(shaderPass.pipeline);
-        commandBuffer.SetBindSet(6, shaderPass.bindSet[frameIndex]);
+        commandBuffer.SetBindSet(6, shaderPass.bindSet);
         commandBuffer.DrawIndexedIndirectCount(
             _compactedCommands[frameIndex],
             _drawCounts[frameIndex],
@@ -609,16 +751,16 @@ void Renderer::DrawDepthOnly(
 
     commandBuffer.SetGraphicsPipeline(forShadows ? _shadowPipeline : _depthOnlyPipeline);
 
-    commandBuffer.SetVertexBuffer(0, _vertexArray.GetBuffer());
-    commandBuffer.SetIndexBuffer(_indexArray.GetBuffer());
+    commandBuffer.SetVertexBuffer(0, _vertices->GetChunk(0));
+    commandBuffer.SetIndexBuffer(_indices->GetChunk(0));
 
     commandBuffer.SetBindSet(0, _staticBindSet[frameIndex]);
     commandBuffer.SetBindSet(1, _perFrameBindSet[frameIndex]);
     cameraProvider->Bind(2, commandBuffer, frameIndex);
 
-    for (uint32_t i = 0; i < _shaderPasses.size(); i++) {
+    for (uint32_t i = 0; i < _shaderToMaxMeshCount.size(); i++) {
         const auto& shaderPass = _shaderPasses[i];
-        if (shaderPass.isTransparent || shaderPass.materials.GetBuffer() == nullptr) continue;
+        if (shaderPass.isTransparent || _shaderToMaxMeshCount[i] == 0) continue;
 
         commandBuffer.DrawIndexedIndirectCount(
             _compactedCommands[frameIndex],
@@ -645,27 +787,100 @@ dvk::BindSetLayout::Ref Renderer::GetTexturesBindSetLayout() const {
     return _texturesBindSetLayout;
 }
 
-void Renderer::_setNeedRebindMeshMetadata() {
-    for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        _needRebindMeshMetadata[i] = true;
+void Renderer::_processRemovalsLocked() {
+    // Dynamic instances whose component has been destroyed have nothing left to read a transform from.
+    for (const auto& slot : _dynamicSlots) {
+        if (slot.instance != NULL_INDEX && slot.component.expired()) {
+            _removedInstances.push_back(slot.instance);
+        }
     }
+
+    for (InstanceIndex index : _removedInstances) {
+        if (index >= _instanceRecords.size() || !_instanceRecords[index].live) continue;
+        auto& record = _instanceRecords[index];
+
+        if (record.published) {
+            _deactivateLocked(index);
+        } else {
+            std::erase(_pendingInstances, index);
+        }
+
+        _instances->Free(record.instance);
+        _staticInstanceFrameData->Free(record.staticFrameData);
+        if (record.dynamicSlot != NULL_INDEX) {
+            // Dynamic frame data is rewritten per frame in flight, so the slot can be reused immediately.
+            _dynamicSlots[record.dynamicSlot] = {};
+            _freeDynamicSlots.push_back(record.dynamicSlot);
+        }
+        _meshes[record.mesh].instanceRefs--;
+
+        record = {};
+    }
+    _removedInstances.clear();
+
+    for (auto [shader, material] : _removedMaterials) {
+        if (shader >= _materials.size() || material >= _materials[shader].size()) continue;
+        auto& record = _materials[shader][material];
+        if (!record.live) continue;
+
+        _shaderPasses[shader].materials->Free(record.allocation);
+        record = {};
+    }
+    _removedMaterials.clear();
+
+    for (MeshIndex index : _removedMeshes) {
+        if (index >= _meshes.size() || !_meshes[index].live) continue;
+        auto& record = _meshes[index];
+        assert(record.instanceRefs == 0 && "Remove a mesh's instances before the mesh");
+
+        _vertices->Free(record.vertices);
+        _indices->Free(record.indices);
+        _meshMetadata->Free(record.metadata);
+        _shaderToLiveMeshCount[record.shader]--;
+
+        record = {};
+    }
+    _removedMeshes.clear();
 }
 
-void Renderer::_setNeedRebindInstances() {
-    for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        _needRebindInstances[i] = true;
-    }
+void Renderer::_publishCompletedLocked() {
+    uint64_t completed = _uploadQueue.GetCompletedValue();
+
+    std::erase_if(_pendingInstances, [&](InstanceIndex index) {
+        if (_instanceRecords[index].ticket.value > completed) return false;
+        _activateLocked(index);
+        return true;
+    });
+
+    // Everything published is at or below this value, so the frame's wait on it is already satisfied.
+    _publishedUploads = UploadTicket { completed };
 }
 
-void Renderer::_setNeedRebindStaticInstanceFrameData() {
-    for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        _needRebindStaticInstanceFrameData[i] = true;
-    }
+void Renderer::_activateLocked(InstanceIndex index) {
+    auto& record = _instanceRecords[index];
+    record.published = true;
+    record.activePosition = static_cast<uint32_t>(_activeInstances.size());
+    _activeInstances.push_back(index);
+    _meshToActiveInstanceCount[record.mesh]++;
+}
+
+void Renderer::_deactivateLocked(InstanceIndex index) {
+    auto& record = _instanceRecords[index];
+
+    uint32_t position = record.activePosition;
+    InstanceIndex last = _activeInstances.back();
+    _activeInstances[position] = last;
+    _instanceRecords[last].activePosition = position;
+    _activeInstances.pop_back();
+
+    record.published = false;
+    record.activePosition = NULL_INDEX;
+    _meshToActiveInstanceCount[record.mesh]--;
 }
 
 bool Renderer::_maybeResizeDynamicInstanceFrameData(uint32_t frameIndex, dvk::Binder& binder) {
     vk::DeviceSize size = _dynamicInstanceFrameData[frameIndex]->GetSize();
-    vk::DeviceSize minSize = _numDynamicInstances * sizeof(InstanceFrameData);
+    vk::DeviceSize minSize = _dynamicInstanceFrameDataStaging.size() * sizeof(InstanceFrameData);
     if (size >= minSize) return false;
 
     do {
@@ -690,7 +905,7 @@ bool Renderer::_maybeResizeDynamicInstanceFrameData(uint32_t frameIndex, dvk::Bi
 
 bool Renderer::_maybeResizeMeshToInstanceIndexOffsets(uint32_t frameIndex, dvk::Binder& binder) {
     vk::DeviceSize size = _meshToInstanceIndexOffsets[frameIndex]->GetSize();
-    vk::DeviceSize minSize = _numMeshes * sizeof(uint32_t);
+    vk::DeviceSize minSize = _numMeshSlots * sizeof(uint32_t);
     if (size >= minSize) return false;
 
     do {
@@ -710,14 +925,12 @@ bool Renderer::_maybeResizeMeshToInstanceIndexOffsets(uint32_t frameIndex, dvk::
         .SetBuffer(newBuffer)
         .FinishBuffer();
 
-    _needRecomputeInstanceIndexOffsets = true;
-
     return true;
 }
 
 bool Renderer::_maybeResizeMeshInstanceCounts(uint32_t frameIndex, dvk::Binder& binder) {
     vk::DeviceSize size = _meshInstanceCounts[frameIndex]->GetSize();
-    vk::DeviceSize minSize = _numMeshes * sizeof(uint32_t);
+    vk::DeviceSize minSize = _numMeshSlots * sizeof(uint32_t);
     if (size >= minSize) return false;
 
     do {
@@ -740,7 +953,7 @@ bool Renderer::_maybeResizeMeshInstanceCounts(uint32_t frameIndex, dvk::Binder& 
 
 bool Renderer::_maybeResizeVisibleInstanceIndices(uint32_t frameIndex, dvk::Binder& binder) {
     vk::DeviceSize size = _visibleInstanceIndices[frameIndex]->GetSize();
-    vk::DeviceSize minSize = (_numStaticInstances + _numDynamicInstances) * sizeof(uint32_t);
+    vk::DeviceSize minSize = _numActiveInstances * sizeof(uint32_t);
     if (size >= minSize) return false;
 
     do {
@@ -763,7 +976,7 @@ bool Renderer::_maybeResizeVisibleInstanceIndices(uint32_t frameIndex, dvk::Bind
 
 bool Renderer::_maybeResizeShaderToCommandIndexOffsets(uint32_t frameIndex, dvk::Binder& binder) {
     vk::DeviceSize size = _shaderToCommandIndexOffsets[frameIndex]->GetSize();
-    vk::DeviceSize minSize = _shaderPasses.size() * sizeof(uint32_t);
+    vk::DeviceSize minSize = _shaderToCommandIndexOffsetsStaging.size() * sizeof(uint32_t);
     if (size >= minSize) return false;
 
     do {
@@ -783,14 +996,12 @@ bool Renderer::_maybeResizeShaderToCommandIndexOffsets(uint32_t frameIndex, dvk:
         .SetBuffer(newBuffer)
         .FinishBuffer();
 
-    _needRecomputeCommandIndexOffsets = true;
-
     return true;
 }
 
 bool Renderer::_maybeResizeDrawCounts(uint32_t frameIndex, dvk::Binder& binder) {
     vk::DeviceSize size = _drawCounts[frameIndex]->GetSize();
-    vk::DeviceSize minSize = _shaderPasses.size() * sizeof(uint32_t);
+    vk::DeviceSize minSize = _shaderToMaxMeshCount.size() * sizeof(uint32_t);
     if (size >= minSize) return false;
 
     do {
@@ -813,7 +1024,7 @@ bool Renderer::_maybeResizeDrawCounts(uint32_t frameIndex, dvk::Binder& binder) 
 
 bool Renderer::_maybeResizeCompactedCommands(uint32_t frameIndex, dvk::Binder& binder) {
     vk::DeviceSize size = _compactedCommands[frameIndex]->GetSize();
-    vk::DeviceSize minSize = _numMeshes * sizeof(VkDrawIndexedIndirectCommand);
+    vk::DeviceSize minSize = _numMeshSlots * sizeof(VkDrawIndexedIndirectCommand);
     if (size >= minSize) return false;
 
     do {
@@ -831,44 +1042,40 @@ bool Renderer::_maybeResizeCompactedCommands(uint32_t frameIndex, dvk::Binder& b
         .SetBuffer(newBuffer)
         .FinishBuffer();
 
-    return false;
+    return true;
+}
+
+bool Renderer::_maybeResizeActiveInstanceIndices(uint32_t frameIndex, dvk::Binder& binder) {
+    vk::DeviceSize size = _activeInstanceIndices[frameIndex]->GetSize();
+    vk::DeviceSize minSize = _numActiveInstances * sizeof(uint32_t);
+    if (size >= minSize) return false;
+
+    do {
+        size *= BUFFER_GROW_FACTOR;
+    } while (size < minSize);
+
+    const auto& newBuffer = _activeInstanceIndices[frameIndex] = dvk::Buffer::Create(GetDevice())
+        .SetLabel("[Mesh Renderer] Active Instance Indices")
+        .SetUsage(vk::BufferUsageFlagBits::eStorageBuffer)
+        .SetSize(size)
+        .EnablePersistentMapping()
+        .AllowSequentialWrite()
+        .Build();
+
+    binder.BindBuffer(7)
+        .SetBufferType(vk::DescriptorType::eStorageBuffer)
+        .SetBuffer(newBuffer)
+        .FinishBuffer();
+
+    return true;
 }
 
 void Renderer::_computeMeshToInstanceIndexOffsets(uint32_t frameIndex) {
-    uint32_t offset = 0;
-    for (size_t i = 0; i < _meshToMaxInstanceCount.size(); i++) {
-        _meshToInstanceIndexOffsetsStaging[i] = offset;
-        offset += _meshToMaxInstanceCount[i];
-    }
-
+    if (_meshToInstanceIndexOffsetsStaging.empty()) return;
     _meshToInstanceIndexOffsets[frameIndex]->CopyToAndFlush(_meshToInstanceIndexOffsetsStaging.data(), 0, _meshToInstanceIndexOffsetsStaging.size() * sizeof(uint32_t));
 }
 
 void Renderer::_computeShaderToCommandIndexOffsets(uint32_t frameIndex) {
-    uint32_t offset = 0;
-    for (size_t i = 0; i < _shaderToMaxMeshCount.size(); i++) {
-        _shaderToCommandIndexOffsetsStaging[i] = offset;
-        offset += _shaderToMaxMeshCount[i];
-    }
-
+    if (_shaderToCommandIndexOffsetsStaging.empty()) return;
     _shaderToCommandIndexOffsets[frameIndex]->CopyToAndFlush(_shaderToCommandIndexOffsetsStaging.data(), 0, _shaderToCommandIndexOffsetsStaging.size() * sizeof(uint32_t));
-}
-
-void Renderer::_writeDynamicInstanceFrameData(uint32_t frameIndex) {
-    if (_dynamicInstanceFrameDataStaging.empty()) return;
-
-    std::erase_if(_dynamicInstanceIndexToComponent, [](const std::weak_ptr<InstanceComponent>& component) {
-        return component.expired();
-    });
-
-    for (DynamicFrameDataIndex frameDataIndex = 0; frameDataIndex < _dynamicInstanceIndexToComponent.size(); frameDataIndex++) {
-        const auto& component = _dynamicInstanceIndexToComponent[frameDataIndex];
-
-        glm::mat4 modelMat = component.lock()->GetNode()->GetMatrix();
-
-        auto& dynamicInstanceFrameData = _dynamicInstanceFrameDataStaging[frameDataIndex];
-        dynamicInstanceFrameData.modelMat = modelMat;
-    }
-
-    _dynamicInstanceFrameData[frameIndex]->CopyToAndFlush(_dynamicInstanceFrameDataStaging.data(), 0, _dynamicInstanceFrameDataStaging.size() * sizeof(InstanceFrameData));
 }

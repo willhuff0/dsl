@@ -25,7 +25,11 @@ public:
         BindingProvider* environmentProvider,
         BindingProvider* directionalLightProvider);
 
-    Model LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::string& path);
+    Model LoadFile(
+        dvk::CommandBuffer& commandBuffer,
+        uint32_t frameIndex,
+        const std::string& path,
+        bool isDynamic = false);
 
 private:
     Watcher _opaqueWatcher;

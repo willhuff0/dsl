@@ -1,4 +1,4 @@
-#include <Terrain.hpp>
+#include <../include/terrain/Terrain.hpp>
 
 #include "Provider.hpp"
 #include "utils/Paths.hpp"

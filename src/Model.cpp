@@ -45,6 +45,7 @@ namespace {
         ShaderIndex opaqueShader;
         ShaderIndex opaqueDoubleSidedShader;
         ShaderIndex transparentShader;
+        bool isDynamic;
     };
 
     struct Material {
@@ -155,19 +156,19 @@ ModelLoader::ModelLoader(
             .Build();
 
         if (_opaque == NULL_INDEX) {
-            _opaque = GetRenderer().AddShader(opaquePipeline, false, "[Model] Opaque");
+            _opaque = GetRenderer().AddShader(opaquePipeline, sizeof(Material), false, "[Model] Opaque");
         } else {
             GetRenderer().SetShaderPipeline(frameIndex, _opaque, opaquePipeline);
         }
 
         if (_opaqueDoubleSided == NULL_INDEX) {
-            _opaqueDoubleSided = GetRenderer().AddShader(opaqueDoubleSidedPipeline, false, "[Model] Opaque Double-Sided");
+            _opaqueDoubleSided = GetRenderer().AddShader(opaqueDoubleSidedPipeline, sizeof(Material), false, "[Model] Opaque Double-Sided");
         } else {
             GetRenderer().SetShaderPipeline(frameIndex, _opaqueDoubleSided, opaqueDoubleSidedPipeline);
         }
 
         if (_transparent == NULL_INDEX) {
-            _transparent = GetRenderer().AddShader(transparentPipeline, true, "[Model] Transparent");
+            _transparent = GetRenderer().AddShader(transparentPipeline, sizeof(Material), true, "[Model] Transparent");
         } else {
             GetRenderer().SetShaderPipeline(frameIndex, _transparent, transparentPipeline);
         }
@@ -384,7 +385,7 @@ static std::pair<MaterialIndex, ShaderIndex> loadMaterial(
     };
 
     ShaderIndex shader = isTransparent ? context.transparentShader : isDoubleSided ? context.opaqueDoubleSidedShader : context.opaqueShader;
-    MaterialIndex rendererMaterialIndex = GetRenderer().AddMaterial(context.commandBuffer, context.frameIndex, shader, &materialDesc, sizeof(Material));
+    MaterialIndex rendererMaterialIndex = GetRenderer().AddMaterial(shader, &materialDesc, sizeof(Material));
     auto cachePair = std::make_pair(rendererMaterialIndex, shader);
     context.materials.emplace(aiMaterialIndex, cachePair);
     return cachePair;
@@ -462,7 +463,7 @@ static std::pair<MeshIndex, MaterialIndex> loadMesh(
     desc.boundingSphereCenter = aabbCenter;
     desc.boundingSphereRadius = radius;
 
-    MeshIndex rendererMeshIndex = GetRenderer().AddMesh(context.commandBuffer, context.frameIndex, rendererShaderIndex, desc);
+    MeshIndex rendererMeshIndex = GetRenderer().AddMesh(rendererShaderIndex, desc);
     context.meshes.emplace(aiMeshIndex, rendererMeshIndex);
     return std::make_pair(rendererMeshIndex, rendererMaterialIndex);
 }
@@ -488,9 +489,9 @@ static Node::Ref loadNode(ModelLoadingContext& context, const aiNode* node) {
         InstanceDesc desc {
             .meshIndex = rendererMeshIndex,
             .materialIndex = rendererMaterialIndex,
-            .isDynamic = true,
+            .isDynamic = context.isDynamic,
         };
-        GetRenderer().AddInstance(context.commandBuffer, context.frameIndex, component, desc);
+        GetRenderer().AddInstance(component, desc);
     }
 
     for (uint32_t i = 0; i < node->mNumChildren; i++) {
@@ -501,7 +502,12 @@ static Node::Ref loadNode(ModelLoadingContext& context, const aiNode* node) {
     return result;
 }
 
-Model ModelLoader::LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameIndex, const std::string& path) {
+Model ModelLoader::LoadFile(
+    dvk::CommandBuffer& commandBuffer,
+    uint32_t frameIndex,
+    const std::string& path,
+    bool isDynamic
+) {
     Assimp::Importer importer;
     const aiScene* scene = importer.ReadFile(path.c_str(), IMPORT_FLAGS);
     if (scene == nullptr || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || scene->mRootNode == nullptr) {
@@ -531,6 +537,7 @@ Model ModelLoader::LoadFile(dvk::CommandBuffer& commandBuffer, uint32_t frameInd
         .opaqueShader = _opaque,
         .opaqueDoubleSidedShader = _opaqueDoubleSided,
         .transparentShader = _transparent,
+        .isDynamic = isDynamic,
     };
 
     return Model(loadNode(context, scene->mRootNode));

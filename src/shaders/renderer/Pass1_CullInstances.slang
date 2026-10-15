@@ -9,10 +9,17 @@
 [[vk::binding(1, 1)]] StructuredBuffer<uint32_t> MeshInstanceIndexOffsets;
 [[vk::binding(2, 1)]] RWStructuredBuffer<Atomic<uint32_t>> MeshInstanceCounts;
 [[vk::binding(3, 1)]] RWStructuredBuffer<uint32_t> VisibleInstanceIndices;
+// Published instance slots. The Instances buffer is sparse and may contain slots still being uploaded.
+[[vk::binding(7, 1)]] StructuredBuffer<uint32_t> ActiveInstanceIndices;
 
 [[vk::binding(0, 2)]] ConstantBuffer<CameraUniforms> Camera;
 
-[[vk::push_constant]] uint32_t NumInstances;
+struct PushConstants {
+    uint32_t numInstances;
+    // 0 for shadow cascades: casters between the light and the cascade are depth-clamped onto its near plane.
+    uint32_t cullNearPlane;
+};
+[[vk::push_constant]] PushConstants Constants;
 
 struct BoundingSphere {
     float3 center;
@@ -33,10 +40,11 @@ void ExtractFrustumPlanes(float4x4 VP, out float4 planes[6]) {
     }
 }
 
-bool IsSphereVisible(BoundingSphere boundingSphere, float4 frustumPlanes[6]) {
-    // Check the sphere against all 6 frustum planes
+bool IsSphereVisible(BoundingSphere boundingSphere, float4 frustumPlanes[6], bool cullNearPlane) {
+    // Check the sphere against all 6 frustum planes, or 5 when the near plane (index 4) is skipped
     [unroll]
     for (int i = 0; i < 6; ++i) {
+        if (i == 4 && !cullNearPlane) continue;
         float3 planeNormal = frustumPlanes[i].xyz;
         float planeDist = frustumPlanes[i].w;
 
@@ -68,8 +76,8 @@ BoundingSphere TransformSphere(float4x4 modelMatrix, float3 localCenter, float l
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void CullInstances(uint32_t3 threadId: SV_DispatchThreadID) {
-    uint32_t instanceIndex = threadId.x;
-    if (instanceIndex >= NumInstances) return;
+    if (threadId.x >= Constants.numInstances) return;
+    uint32_t instanceIndex = ActiveInstanceIndices[threadId.x];
 
     Instance instance = Instances[instanceIndex];
     InstanceFrameData instanceFrameData;
@@ -84,7 +92,7 @@ void CullInstances(uint32_t3 threadId: SV_DispatchThreadID) {
     ExtractFrustumPlanes(Camera.viewProjMat, planes);
 
     BoundingSphere boundingSphere = TransformSphere(instanceFrameData.modelMat, meshMetadata.boundingSphereCenter, meshMetadata.boundingSphereRadius);
-    if (!IsSphereVisible(boundingSphere, planes)) return;
+    if (!IsSphereVisible(boundingSphere, planes, Constants.cullNearPlane != 0)) return;
 
     uint32_t perMeshLocalInstanceIndex = MeshInstanceCounts[instance.meshIndex]++;
     uint32_t meshInstanceIndexOffset = MeshInstanceIndexOffsets[instance.meshIndex];

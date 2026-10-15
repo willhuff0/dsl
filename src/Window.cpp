@@ -8,6 +8,7 @@ Window::Window(uint32_t _width, uint32_t _height, const std::string& title) {
     height = _height;
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
     handle = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
     if (handle == nullptr) {
         throw std::runtime_error("Failed to create GLFW window!");

@@ -74,33 +74,13 @@ static glm::mat4 getCascadeViewProjMat(
     if (std::abs(normalize(lightDir).y) > 0.999f) {
         up = glm::vec3(0.0f, 0.0f, 1.0f);
     }
-    auto lightViewMat = glm::lookAt(center + lightDir, center, up);
+    // Eye on the near side of the cascade's bounding sphere, looking through its center.
+    auto lightViewMat = glm::lookAt(center + normalize(lightDir) * radius, center, up);
 
-    float minX = -radius;
-    float maxX = radius;
-    float minY = -radius;
-    float maxY = radius;
-    float minZ = std::numeric_limits<float>::infinity();
-    float maxZ = -std::numeric_limits<float>::infinity();
-    for (const auto& corner : frustumCorners) {
-        auto cornerLightViewSpace = lightViewMat * corner;
-        minZ = std::min(minZ, cornerLightViewSpace.z);
-        maxZ = std::max(maxZ, cornerLightViewSpace.z);
-    }
-
-    float zMult = 5.0;
-    if (minZ < 0.0f) {
-        minZ *= zMult;
-    } else {
-        minZ /= zMult;
-    }
-    if (maxZ < 0.0f) {
-        maxZ /= zMult;
-    } else {
-        maxZ *= zMult;
-    }
-
-    auto lightProjMat = glm::orthoRH_ZO(minX, maxX, minY, maxY, -maxZ, -minZ);
+    // The depth range only has to cover the receivers, i.e. the bounding sphere, which also keeps it constant
+    // as the camera rotates. Casters closer to the light than the near plane aren't lost: the shadow pipeline
+    // depth-clamps them to 0 and the cull pass skips the near plane for cascades.
+    auto lightProjMat = glm::orthoRH_ZO(-radius, radius, -radius, radius, 0.0f, 2.0f * radius);
 
     auto shadowMat = lightProjMat * lightViewMat;
     auto shadowOrigin = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -284,7 +264,7 @@ void DirectionalLight::DrawShadowMap(dvk::CommandBuffer& commandBuffer, uint32_t
             const dvk::BindSet::Refs<FRAMES_IN_FLIGHT>& _cameraBindSet;
         } camera(_cascadeToCameraBindSet[cascade]);
 
-        GetRenderer().ComputeDrawCommands(commandBuffer, frameIndex, &camera);
+        GetRenderer().ComputeDrawCommands(commandBuffer, frameIndex, &camera, false);
 
         commandBuffer.BeginRegion("[Directional Light] Draw Shadow Map", glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         commandBuffer.BeginRendering()

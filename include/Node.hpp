@@ -97,6 +97,8 @@ public:
     void RemoveAllChildren();
 
     [[nodiscard]] const std::vector<Component::Ref>& GetComponents() const;
+    template<std::derived_from<Component> T>
+    [[nodiscard]] std::shared_ptr<T> GetComponent() const;
     void AddComponent(Component::Ref component);
     void RemoveComponent(const Component::Ref& component);
 
@@ -129,3 +131,13 @@ private:
     void _onEnable();
     void _onDisable();
 };
+
+template<std::derived_from<Component> T>
+std::shared_ptr<T> Node::GetComponent() const {
+    for (auto& component : _components) {
+        if (auto derived = std::dynamic_pointer_cast<T>(component)) {
+            return derived;
+        }
+    }
+    return nullptr;
+}

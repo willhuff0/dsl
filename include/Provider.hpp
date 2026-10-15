@@ -8,7 +8,9 @@
 #include "BindingProvider.hpp"
 
 class Renderer;
+class UploadQueue;
 class BindingProvider;
+class Physics;
 
 constexpr uint32_t FRAMES_IN_FLIGHT = 2;
 constexpr vk::Format SHADOW_DEPTH_FORMAT = vk::Format::eD32Sfloat;
@@ -39,3 +41,5 @@ const dvk::BindSetLayout::Ref& GetDebugTextureBindSetLayout();
 const dvk::BindSet::Ref& GetDebugTextureBindSet();
 
 Renderer& GetRenderer();
+UploadQueue& GetUploadQueue();
+Physics& GetPhysics();
