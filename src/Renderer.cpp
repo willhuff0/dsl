@@ -612,6 +612,32 @@ void Renderer::ComputeDrawCommands(
 ) {
     commandBuffer.BeginRegion("[Mesh Renderer] Compute Draw Commands", glm::vec4(0.6f, 0.4f, 0.4f, 1.0f));
 
+    // This runs once per view (each shadow cascade, then the main camera) into the same per-frame buffers, so the
+    // previous view's pass 2 and draws must finish reading them before they are cleared and rewritten. Reads leave
+    // nothing to make available, so an execution dependency is enough.
+    commandBuffer.InsertBarriers()
+        .AddBufferBarrier()
+            .SetBuffer(_meshInstanceCounts[frameIndex])
+            .SetAccess(vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eNone)
+            .SetStages(vk::PipelineStageFlagBits2::eComputeShader, vk::PipelineStageFlagBits2::eTransfer)
+            .FinishBufferBarrier()
+        .AddBufferBarrier()
+            .SetBuffer(_drawCounts[frameIndex])
+            .SetAccess(vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eNone)
+            .SetStages(vk::PipelineStageFlagBits2::eDrawIndirect, vk::PipelineStageFlagBits2::eTransfer)
+            .FinishBufferBarrier()
+        .AddBufferBarrier()
+            .SetBuffer(_compactedCommands[frameIndex])
+            .SetAccess(vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eNone)
+            .SetStages(vk::PipelineStageFlagBits2::eDrawIndirect, vk::PipelineStageFlagBits2::eComputeShader)
+            .FinishBufferBarrier()
+        .AddBufferBarrier()
+            .SetBuffer(_visibleInstanceIndices[frameIndex])
+            .SetAccess(vk::AccessFlagBits2::eNone, vk::AccessFlagBits2::eNone)
+            .SetStages(vk::PipelineStageFlagBits2::eVertexShader, vk::PipelineStageFlagBits2::eComputeShader)
+            .FinishBufferBarrier()
+        .FinishBarriers();
+
     commandBuffer.FillBuffer(_meshInstanceCounts[frameIndex], 0);
     commandBuffer.FillBuffer(_drawCounts[frameIndex], 0);
 
